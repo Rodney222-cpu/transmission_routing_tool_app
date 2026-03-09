@@ -1,0 +1,23 @@
+# Core Flask dependencies
+Flask==3.0.0
+Flask-SQLAlchemy==3.1.1
+Flask-Login==0.6.3
+Flask-CORS==4.0.0
+Werkzeug==3.0.1
+
+# Scientific computing (use latest compatible versions)
+numpy>=1.24.0
+scipy>=1.10.0
+
+# GIS libraries - simplified for Windows compatibility
+# Note: GDAL, rasterio, and Fiona require complex C dependencies
+# For Windows, install from wheel files or use conda
+# Shapely has pre-built wheels
+Shapely>=2.0.0
+
+# Utilities
+python-dotenv==1.0.0
+
+# Production server (Linux/Mac only)
+# gunicorn==21.2.0  # Uncomment for Linux/Mac deployment
+

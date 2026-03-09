@@ -1,0 +1,513 @@
+/**
+ * Styles for Transmission Line Routing Optimization Tool
+ */
+
+/* Reset and base styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 14px;
+    color: #333;
+    background: #f5f5f5;
+}
+
+/* Login Page */
+.login-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    /* UETCL branded background - can be replaced with actual image */
+    background: linear-gradient(135deg, rgba(0, 51, 102, 0.9) 0%, rgba(0, 102, 153, 0.9) 100%),
+                url('../images/uetcl_background.jpg') center/cover no-repeat;
+    /* Fallback gradient if image not available */
+    background-color: #003366;
+}
+
+.login-container {
+    width: 100%;
+    max-width: 450px;
+    padding: 20px;
+}
+
+.login-box {
+    background: white;
+    border-radius: 10px;
+    padding: 40px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.logo {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.login-logo {
+    max-width: 150px;
+    height: auto;
+    margin-bottom: 20px;
+}
+
+.logo h1 {
+    font-size: 24px;
+    color: #003366;
+    margin-bottom: 10px;
+}
+
+.company-name-login {
+    display: block;
+    font-size: 14px;
+    color: #666;
+    font-weight: 600;
+    margin-top: 5px;
+}
+
+.logo p {
+    font-size: 12px;
+    color: #666;
+}
+
+.login-form h2 {
+    margin-bottom: 20px;
+    color: #333;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #555;
+}
+
+.form-group input[type="text"],
+.form-group input[type="email"],
+.form-group input[type="password"],
+.form-control {
+    width: 100%;
+    padding: 10px 15px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 14px;
+    transition: border-color 0.3s;
+}
+
+.form-group input:focus,
+.form-control:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.form-group.checkbox {
+    display: flex;
+    align-items: center;
+}
+
+.form-group.checkbox label {
+    margin: 0;
+    margin-left: 5px;
+    font-weight: normal;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s;
+}
+
+.btn-primary {
+    background: #667eea;
+    color: white;
+    width: 100%;
+}
+
+.btn-primary:hover {
+    background: #5568d3;
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background: #5a6268;
+}
+
+.btn-sm {
+    padding: 5px 10px;
+    font-size: 12px;
+    margin: 5px;
+}
+
+.btn-large {
+    padding: 15px;
+    font-size: 16px;
+    width: 100%;
+}
+
+.register-link {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 13px;
+}
+
+.register-link a {
+    color: #667eea;
+    text-decoration: none;
+}
+
+.register-link a:hover {
+    text-decoration: underline;
+}
+
+.case-study-info {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid #eee;
+    text-align: center;
+}
+
+.case-study-info h3 {
+    font-size: 14px;
+    color: #667eea;
+    margin-bottom: 5px;
+}
+
+.case-study-info p {
+    font-size: 12px;
+    color: #999;
+}
+
+.alert {
+    padding: 10px 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+}
+
+.alert-error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.alert-success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.alert-info {
+    background: #d1ecf1;
+    color: #0c5460;
+    border: 1px solid #bee5eb;
+}
+
+/* Dashboard */
+.dashboard {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.dashboard-header {
+    background: #003366;  /* UETCL brand color */
+    color: white;
+    padding: 15px 30px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.company-branding {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.company-logo {
+    max-height: 60px;
+    width: auto;
+}
+
+.company-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.company-name {
+    font-size: 12px;
+    color: #ffd700;  /* Gold color for company name */
+    font-weight: 600;
+    margin-bottom: 3px;
+}
+
+.dashboard-header h1 {
+    font-size: 20px;
+    margin-bottom: 5px;
+}
+
+.subtitle {
+    font-size: 12px;
+    color: #bdc3c7;
+}
+
+.user-info {
+    margin-right: 15px;
+    font-size: 13px;
+}
+
+.dashboard-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 350px;
+    background: white;
+    border-right: 1px solid #ddd;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.sidebar-section {
+    margin-bottom: 25px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #eee;
+}
+
+.sidebar-section:last-child {
+    border-bottom: none;
+}
+
+.sidebar-section h3 {
+    font-size: 16px;
+    margin-bottom: 15px;
+    color: #2c3e50;
+}
+
+.help-text {
+    font-size: 12px;
+    color: #999;
+    margin-bottom: 10px;
+}
+
+.point-info {
+    background: #f8f9fa;
+    padding: 10px;
+    border-radius: 5px;
+    margin-bottom: 10px;
+}
+
+.point-info strong {
+    display: block;
+    margin-bottom: 5px;
+    color: #2c3e50;
+}
+
+.point-info div {
+    font-size: 12px;
+    color: #666;
+}
+
+/* Weight controls */
+.weight-control {
+    margin-bottom: 15px;
+}
+
+.weight-control label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 13px;
+}
+
+.weight-control input[type="range"] {
+    width: 100%;
+}
+
+.weight-sum {
+    margin-top: 15px;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 5px;
+    text-align: center;
+    font-weight: bold;
+}
+
+/* Loading indicator */
+.loading {
+    text-align: center;
+    padding: 20px;
+}
+
+.spinner {
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #667eea;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 10px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Map container */
+.map-container {
+    flex: 1;
+    position: relative;
+}
+
+#map {
+    width: 100%;
+    height: 100%;
+}
+
+.map-controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: white;
+    padding: 15px;
+    border-radius: 5px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    z-index: 1000;
+}
+
+.control-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+
+.control-group input[type="checkbox"] {
+    margin-right: 5px;
+}
+
+/* Results */
+.metrics p {
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+
+.errors, .warnings {
+    margin-top: 15px;
+    padding: 10px;
+    border-radius: 5px;
+}
+
+.errors {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+}
+
+.errors h4 {
+    color: #721c24;
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.warnings {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+}
+
+.warnings h4 {
+    color: #856404;
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.errors ul, .warnings ul {
+    margin-left: 20px;
+    font-size: 12px;
+}
+
+/* Cost Breakdown */
+.cost-breakdown {
+    margin-top: 10px;
+}
+
+.cost-items {
+    background: #f8f9fa;
+    border-radius: 5px;
+    padding: 10px;
+}
+
+.cost-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #dee2e6;
+    font-size: 12px;
+}
+
+.cost-item:last-child {
+    border-bottom: none;
+}
+
+.cost-total {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 2px solid #003366;
+    font-size: 14px;
+}
+
+.cost-label {
+    color: #495057;
+}
+
+.cost-value {
+    color: #003366;
+    font-weight: 600;
+}
+
+/* Legend */
+.legend {
+    background: white;
+    padding: 10px;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+.legend h4 {
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+.legend div {
+    margin-bottom: 5px;
+    font-size: 12px;
+}
+
+.legend span {
+    display: inline-block;
+    width: 20px;
+    height: 3px;
+    margin-right: 5px;
+}
+
+.btn.active {
+    background: #28a745;
+    color: white;
+}
+

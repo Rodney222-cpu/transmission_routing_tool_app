@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Transmission Line Routing Tool</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-left">
+                <div class="company-branding">
+                    <img src="{{ url_for('static', filename='images/uetcl_logo.png') }}" alt="UETCL Logo" class="company-logo" onerror="this.style.display='none'">
+                    <div class="company-info">
+                        <h1>⚡ Transmission Line Routing Tool</h1>
+                        <span class="company-name">Uganda Electricity Transmission Company Limited (UETCL)</span>
+                        <span class="subtitle">Olwiyo - South Sudan 400kV Interconnection</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <span class="user-info">{{ user.username }} ({{ user.organization }})</span>
+                <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary">Logout</a>
+            </div>
+        </header>
+        
+        <!-- Main Content -->
+        <div class="dashboard-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <h3>Project Setup</h3>
+                    
+                    <div class="form-group">
+                        <label>Project Name</label>
+                        <input type="text" id="projectName" value="Olwiyo-South Sudan Line" class="form-control">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Voltage Level</label>
+                        <select id="voltageLevel" class="form-control">
+                            <option value="400" selected>400 kV</option>
+                            <option value="220">220 kV</option>
+                            <option value="132">132 kV</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Tower Type</label>
+                        <select id="towerType" class="form-control">
+                            <option value="lattice" selected>Steel Lattice</option>
+                            <option value="monopole">Monopole</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="sidebar-section">
+                    <h3>Route Points</h3>
+
+                    <div class="point-info">
+                        <strong>Start: Olwiyo Substation</strong>
+                        <div id="startCoords">Lat: 3.3833, Lon: 32.5667</div>
+                    </div>
+
+                    <div class="point-info">
+                        <strong>End: South Sudan Border</strong>
+                        <div id="endCoords">Lat: 3.5833, Lon: 32.1167</div>
+                    </div>
+
+                    <button id="setStartBtn" class="btn btn-sm">Set Start Point</button>
+                    <button id="setEndBtn" class="btn btn-sm">Set End Point</button>
+
+                    <div style="margin-top: 15px;">
+                        <h4>Waypoints (Optional)</h4>
+                        <p class="help-text" style="font-size: 11px;">Add intermediate points the route must pass through</p>
+                        <div id="waypointsList"></div>
+                        <button id="addWaypointBtn" class="btn btn-sm" style="margin-top: 5px;">+ Add Waypoint</button>
+                    </div>
+                </div>
+                
+                <div class="sidebar-section">
+                    <h3>AHP Weights</h3>
+                    <p class="help-text">Adjust weights for cost factors (must sum to 1.0)<br>
+                    <small>Based on Table 4-12, Page 90 of Report</small></p>
+
+                    <div class="weight-control">
+                        <label>Settlements (People): <span id="settlementsValue">0.20</span></label>
+                        <input type="range" id="settlementsWeight" min="0" max="1" step="0.01" value="0.20">
+                    </div>
+
+                    <div class="weight-control">
+                        <label>Protected Areas (Habitat+Fauna): <span id="protectedValue">0.289</span></label>
+                        <input type="range" id="protectedWeight" min="0" max="1" step="0.01" value="0.289">
+                    </div>
+
+                    <div class="weight-control">
+                        <label>Vegetation (Forests): <span id="vegetationValue">0.156</span></label>
+                        <input type="range" id="vegetationWeight" min="0" max="1" step="0.01" value="0.156">
+                    </div>
+
+                    <div class="weight-control">
+                        <label>Land Use (Agriculture): <span id="landUseValue">0.133</span></label>
+                        <input type="range" id="landUseWeight" min="0" max="1" step="0.01" value="0.133">
+                    </div>
+
+                    <div class="weight-control">
+                        <label>Water (Wetlands/Rivers): <span id="waterValue">0.089</span></label>
+                        <input type="range" id="waterWeight" min="0" max="1" step="0.01" value="0.089">
+                    </div>
+
+                    <div class="weight-control">
+                        <label>Topography (Landscape): <span id="topoValue">0.067</span></label>
+                        <input type="range" id="topoWeight" min="0" max="1" step="0.01" value="0.067">
+                    </div>
+
+                    <div class="weight-control">
+                        <label>Cultural Heritage: <span id="culturalValue">0.044</span></label>
+                        <input type="range" id="culturalWeight" min="0" max="1" step="0.01" value="0.044">
+                    </div>
+
+                    <div class="weight-control">
+                        <label>Public Infrastructure: <span id="publicInfraValue">0.022</span></label>
+                        <input type="range" id="publicInfraWeight" min="0" max="1" step="0.01" value="0.022">
+                    </div>
+
+                    <div class="weight-sum">Total: <span id="weightSum">1.00</span></div>
+                </div>
+                
+                <div class="sidebar-section">
+                    <button id="optimizeBtn" class="btn btn-primary btn-large">
+                        🚀 Optimize Route
+                    </button>
+
+                    <button id="generateTowersBtn" class="btn btn-secondary btn-large" style="display: none; margin-top: 10px;">
+                        🗼 Generate Towers
+                    </button>
+
+                    <div id="loadingIndicator" class="loading" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Generating optimal route...</p>
+                    </div>
+                </div>
+                
+                <div class="sidebar-section" id="resultsSection" style="display: none;">
+                    <h3>Results</h3>
+                    <div id="routeMetrics"></div>
+
+                    <h4 style="margin-top: 20px;">Cost Breakdown</h4>
+                    <div id="costBreakdown" class="cost-breakdown"></div>
+
+                    <button id="exportBtn" class="btn btn-secondary">Export Route</button>
+                    <button id="viewCorridorBtn" class="btn btn-secondary">View Corridor</button>
+                </div>
+            </aside>
+            
+            <!-- Map Container -->
+            <main class="map-container">
+                <div id="map"></div>
+                
+                <!-- Map Controls -->
+                <div class="map-controls">
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="showDEM" checked> DEM/Topography
+                        </label>
+                        <label>
+                            <input type="checkbox" id="showLandUse" checked> Land Use
+                        </label>
+                        <label>
+                            <input type="checkbox" id="showSettlements" checked> Settlements
+                        </label>
+                        <label>
+                            <input type="checkbox" id="showProtected"> Protected Areas
+                        </label>
+                        <label>
+                            <input type="checkbox" id="showRoads"> Roads
+                        </label>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Custom JS -->
+    <script src="{{ url_for('static', filename='js/map.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/optimize.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/layers.js') }}"></script>
+</body>
+</html>
+

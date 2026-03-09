@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Transmission Line Routing Tool</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="login-page">
+    <div class="login-container">
+        <div class="login-box">
+            <div class="logo">
+                <img src="{{ url_for('static', filename='images/uetcl_logo.png') }}" alt="UETCL Logo" class="login-logo" onerror="this.style.display='none'">
+                <h1>⚡ Transmission Line Routing</h1>
+                <p class="company-name-login">Uganda Electricity Transmission Company Limited (UETCL)</p>
+            </div>
+            
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+            
+            <form method="POST" action="{{ url_for('auth.login') }}" class="login-form">
+                <h2>Login</h2>
+                
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" required autofocus>
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                
+                <div class="form-group checkbox">
+                    <label>
+                        <input type="checkbox" name="remember" value="1">
+                        Remember me
+                    </label>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Login</button>
+                
+                <p class="register-link">
+                    Don't have an account? <a href="{{ url_for('auth.register') }}">Register here</a>
+                </p>
+            </form>
+            
+            <div class="case-study-info">
+                <h3>Olwiyo - South Sudan 400kV Interconnection</h3>
+                <p>Automated transmission line routing optimization tool</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
