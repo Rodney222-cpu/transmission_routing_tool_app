@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Transmission Line Routing Optimization Tool
 
 A Python Flask web application for automated transmission line routing optimization, developed for the Uganda Electricity Transmission Company Limited (UETCL). This tool is based on the **Olwiyo (Uganda) – South Sudan 400kV Interconnection** case study.
@@ -213,3 +214,6 @@ Developed for the Uganda Electricity Transmission Company Limited (UETCL) - Olwi
 - NEMA/NFA/UWA for Uganda environmental data
 - OpenStreetMap contributors
 
+=======
+# transmission_routing_tool_app
+>>>>>>> bc964a48905940b596b45035a810392173da8f3b
