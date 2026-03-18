@@ -12,14 +12,11 @@ let corridorLayer = null;
 let towerMarkers = [];
 let waypointMarkers = {}; // Store waypoint markers by ID
 
-// Default coordinates (Olwiyo and South Sudan border)
-const DEFAULT_START = { lat: 3.3833, lon: 32.5667, name: 'Olwiyo Substation' };
-const DEFAULT_END = { lat: 3.5833, lon: 32.1167, name: 'South Sudan Border (Elegu)' };
-
-// Current project state
+// No preset points - user must set start, way and end points
+// Current project state (start/end set by user via map)
 let currentProject = {
-    start: DEFAULT_START,
-    end: DEFAULT_END,
+    start: null,
+    end: null,
     route: null,
     projectId: null
 };
@@ -58,9 +55,15 @@ function initMap() {
     // Add scale
     L.control.scale({ imperial: false, metric: true }).addTo(map);
     
-    // Initialize default markers
-    addStartMarker(DEFAULT_START.lat, DEFAULT_START.lon);
-    addEndMarker(DEFAULT_END.lat, DEFAULT_END.lon);
+    // No preset markers - user sets start, way and end points via sidebar buttons
+    updatePointLabels();
+
+    // Add legend (defined in layers.js) after map exists
+    if (typeof window !== 'undefined' && typeof window.addLegend === 'function') {
+        window.addLegend();
+    } else if (typeof addLegend === 'function') {
+        addLegend();
+    }
     
     // Add click handler for point selection
     map.on('click', onMapClick);
@@ -87,7 +90,7 @@ function addStartMarker(lat, lon) {
     
     startMarker = L.marker([lat, lon], { icon: greenIcon, draggable: true })
         .addTo(map)
-        .bindPopup('<b>Start: Olwiyo Substation</b><br>400kV Substation')
+        .bindPopup('<b>Start Point</b><br>Lat: ' + lat.toFixed(4) + ', Lon: ' + lon.toFixed(4))
         .openPopup();
     
     startMarker.on('dragend', function(e) {
@@ -95,7 +98,8 @@ function addStartMarker(lat, lon) {
         updateStartCoords(pos.lat, pos.lng);
     });
     
-    currentProject.start = { lat, lon, name: 'Olwiyo Substation' };
+    currentProject.start = { lat, lon, name: 'Start Point' };
+    updatePointLabels();
 }
 
 /**
@@ -117,7 +121,7 @@ function addEndMarker(lat, lon) {
     
     endMarker = L.marker([lat, lon], { icon: redIcon, draggable: true })
         .addTo(map)
-        .bindPopup('<b>End: South Sudan Border</b><br>Elegu Border Point')
+        .bindPopup('<b>End Point</b><br>Lat: ' + lat.toFixed(4) + ', Lon: ' + lon.toFixed(4))
         .openPopup();
     
     endMarker.on('dragend', function(e) {
@@ -125,7 +129,8 @@ function addEndMarker(lat, lon) {
         updateEndCoords(pos.lat, pos.lng);
     });
     
-    currentProject.end = { lat, lon, name: 'South Sudan Border' };
+    currentProject.end = { lat, lon, name: 'End Point' };
+    updatePointLabels();
 }
 
 /**
@@ -209,16 +214,30 @@ function removeWaypointMarker(waypointId) {
  * Update start coordinates display
  */
 function updateStartCoords(lat, lon) {
-    document.getElementById('startCoords').textContent = `Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}`;
-    currentProject.start = { lat, lon, name: 'Olwiyo Substation' };
+    const el = document.getElementById('startCoords');
+    if (el) el.textContent = `Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}`;
+    currentProject.start = { lat, lon, name: 'Start Point' };
+    updatePointLabels();
 }
 
 /**
  * Update end coordinates display
  */
 function updateEndCoords(lat, lon) {
-    document.getElementById('endCoords').textContent = `Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}`;
-    currentProject.end = { lat, lon, name: 'South Sudan Border' };
+    const el = document.getElementById('endCoords');
+    if (el) el.textContent = `Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}`;
+    currentProject.end = { lat, lon, name: 'End Point' };
+    updatePointLabels();
+}
+
+/**
+ * Update sidebar labels for start/end when not set
+ */
+function updatePointLabels() {
+    const startEl = document.getElementById('startCoords');
+    const endEl = document.getElementById('endCoords');
+    if (startEl && !currentProject.start) startEl.textContent = 'Not set — click "Set Start Point" then click map';
+    if (endEl && !currentProject.end) endEl.textContent = 'Not set — click "Set End Point" then click map';
 }
 
 /**

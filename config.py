@@ -209,6 +209,13 @@ class Config:
     DEFAULT_MAP_CENTER = [3.4833, 32.3417]  # Between Olwiyo and border
     DEFAULT_MAP_ZOOM = 10
 
+    # Coordinate reference systems (for uniformity and simulation)
+    # Display and GeoJSON use WGS 84 (lat/lon)
+    MAP_CRS = 'EPSG:4326'  # WGS 84 - used for all map and API coordinates
+    # For simulation: Eastings, Northings, elevation (Uganda UTM zone 36N)
+    PREFERRED_PROJECTED_CRS = 'EPSG:21096'  # UTM zone 36N for Uganda
+    CRS_DESCRIPTION = 'WGS 84 (EPSG:4326). Export in Eastings, Northings, elevation (UTM 36N, EPSG:21096) for simulation.'
+
 
 class DevelopmentConfig(Config):
     """Development configuration"""

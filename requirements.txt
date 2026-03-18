@@ -18,6 +18,9 @@ Shapely>=2.0.0
 # Utilities
 python-dotenv==1.0.0
 
+# Coordinate transformation (Eastings/Northings for simulation)
+pyproj>=3.6.0
+
 # Production server (Linux/Mac only)
 # gunicorn==21.2.0  # Uncomment for Linux/Mac deployment
 

@@ -13,8 +13,10 @@ from app import db
 from app.models import Project, Route, CostSurface
 from app.optimizer.cost_surface import CostSurfaceGenerator
 from app.optimizer.dijkstra import LeastCostPathFinder
+from app.optimizer.astar import AStarPathFinder
 from app.optimizer.engineering_validation import EngineeringValidator
 from app.services.corridor_restriction import CorridorRestrictionService
+from app.services.gis_data_loader import load_layers_for_bounds
 
 api_bp = Blueprint('api', __name__)
 
@@ -107,56 +109,97 @@ def create_project():
     }), 201
 
 
+def _run_pathfinder(cost_surface, bounds, route_points, algorithm):
+    """Run dijkstra or astar and return path_result, path_coords, pathfinder for a single algorithm."""
+    if algorithm == 'astar':
+        pathfinder = AStarPathFinder(cost_surface)
+    else:
+        pathfinder = LeastCostPathFinder(cost_surface)
+
+    all_paths = []
+    total_cost = 0
+    for i in range(len(route_points) - 1):
+        segment_start_pixel = _geo_to_pixel(
+            route_points[i]['lon'], route_points[i]['lat'],
+            bounds, cost_surface.shape
+        )
+        segment_end_pixel = _geo_to_pixel(
+            route_points[i + 1]['lon'], route_points[i + 1]['lat'],
+            bounds, cost_surface.shape
+        )
+        segment_result = pathfinder.find_path(segment_start_pixel, segment_end_pixel)
+        if segment_result is None:
+            return None, None, None
+        if i == 0:
+            all_paths.extend(segment_result['path'])
+        else:
+            all_paths.extend(segment_result['path'][1:])
+        total_cost += segment_result['total_cost']
+
+    path_result = {'path': all_paths, 'total_cost': total_cost, 'distance': len(all_paths)}
+    path_coords = pathfinder.path_to_coordinates(path_result['path'], bounds, 30)
+    return path_result, path_coords, pathfinder
+
+
 @api_bp.route('/projects/<int:project_id>/optimize', methods=['POST'])
 @login_required
 def optimize_route(project_id):
     """
-    Generate optimized route for a project using Dijkstra's algorithm
-    
-    This is the main endpoint for route optimization
+    Generate optimized route for a project.
+    Body: { "algorithm": "dijkstra" | "astar" (optional, default dijkstra),
+            "compare": true (optional) to run both and return comparison }
     """
     project = Project.query.get_or_404(project_id)
-    
-    # Check ownership
+
     if project.user_id != current_user.id:
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
+    data = request.get_json() or {}
+    algorithm = (data.get('algorithm') or 'dijkstra').lower()
+    if algorithm not in ('dijkstra', 'astar'):
+        algorithm = 'dijkstra'
+    compare = data.get('compare', False)
+
     try:
-        # Update project status
         project.status = 'processing'
         db.session.commit()
-        
-        # Get AHP weights
+
         ahp_weights = project.get_ahp_weights() or current_app.config['DEFAULT_AHP_WEIGHTS']
-        
-        # Define bounds (expand around start and end points)
-        margin = 0.1  # degrees
+        margin = 0.1
         bounds = [
             min(project.start_lon, project.end_lon) - margin,
             min(project.start_lat, project.end_lat) - margin,
             max(project.start_lon, project.end_lon) + margin,
             max(project.start_lat, project.end_lat) + margin
         ]
-        
-        # Generate cost surface
-        cost_generator = CostSurfaceGenerator(current_app.config)
 
-        # For demo purposes, create synthetic data
-        # In production, load actual GIS layers
-        layers_data = _create_demo_layers(bounds, current_app.config)
-        
+        cost_generator = CostSurfaceGenerator(current_app.config)
+        # Prefer real GIS data if present; otherwise fall back to demo layers.
+        # We precompute an expected raster shape so real rasters can be resampled consistently.
+        layers_data = {}
+        data_source = "demo"
+        try:
+            shape = _shape_from_bounds(bounds, resolution_m=30)
+            layers_data = load_layers_for_bounds(current_app.config, tuple(bounds), shape)
+            if layers_data:
+                data_source = "real"
+        except Exception:
+            layers_data = {}
+            data_source = "demo"
+        if not layers_data:
+            layers_data = _create_demo_layers(bounds, current_app.config)
+
         cost_surface, metadata = cost_generator.generate_composite_cost_surface(
             bounds, ahp_weights, layers_data
         )
-        
-        # Save cost surface
+        metadata = metadata or {}
+        metadata["data_source"] = data_source
+
         cost_surface_path = os.path.join(
             current_app.config['DATA_FOLDER'],
             f'cost_surface_project_{project_id}.tif'
         )
         cost_generator.save_cost_surface(cost_surface, cost_surface_path, bounds)
-        
-        # Store cost surface record
         cost_surf_record = CostSurface(
             project_id=project.id,
             file_path=cost_surface_path,
@@ -165,77 +208,48 @@ def optimize_route(project_id):
         )
         cost_surf_record.set_bounds(bounds)
         db.session.add(cost_surf_record)
-        
-        # Run Dijkstra's algorithm
-        pathfinder = LeastCostPathFinder(cost_surface)
 
-        # Get waypoints from project metadata
-        metadata = project.get_metadata()
-        waypoints_data = metadata.get('waypoints', []) if metadata else []
-
-        # Build list of points to route through: start -> waypoint1 -> waypoint2 -> ... -> end
+        proj_metadata = project.get_metadata()
+        waypoints_data = proj_metadata.get('waypoints', []) if proj_metadata else []
         route_points = [{'lat': project.start_lat, 'lon': project.start_lon}]
         route_points.extend(waypoints_data)
         route_points.append({'lat': project.end_lat, 'lon': project.end_lon})
 
-        # Find path through all segments
-        all_paths = []
-        total_cost = 0
+        comparison = {}
+        path_result = None
+        path_coords = None
+        pathfinder = None
+        chosen_algorithm = algorithm
 
-        for i in range(len(route_points) - 1):
-            # Convert geographic coordinates to pixel coordinates
-            segment_start_pixel = _geo_to_pixel(
-                route_points[i]['lon'], route_points[i]['lat'],
-                bounds, cost_surface.shape
-            )
-            segment_end_pixel = _geo_to_pixel(
-                route_points[i+1]['lon'], route_points[i+1]['lat'],
-                bounds, cost_surface.shape
-            )
+        if compare:
+            for algo in ('dijkstra', 'astar'):
+                pr, pc, pf = _run_pathfinder(cost_surface, bounds, route_points, algo)
+                if pr is not None:
+                    comparison[algo] = {
+                        'total_cost': pr['total_cost'],
+                        'path_length_pixels': pr['distance'],
+                        'path_coords_count': len(pc),
+                    }
+                else:
+                    comparison[algo] = None
+            # Use requested algorithm for main result
+            path_result, path_coords, pathfinder = _run_pathfinder(cost_surface, bounds, route_points, algorithm)
+        else:
+            path_result, path_coords, pathfinder = _run_pathfinder(cost_surface, bounds, route_points, algorithm)
 
-            # Find path for this segment
-            segment_result = pathfinder.find_path(segment_start_pixel, segment_end_pixel)
+        if path_result is None or path_coords is None or pathfinder is None:
+            project.status = 'failed'
+            db.session.commit()
+            return jsonify({'error': 'No valid path found for the selected algorithm'}), 400
 
-            if segment_result is None:
-                project.status = 'failed'
-                db.session.commit()
-                return jsonify({'error': f'No valid path found for segment {i+1}'}), 400
-
-            # Add segment path (skip first point if not the first segment to avoid duplicates)
-            if i == 0:
-                all_paths.extend(segment_result['path'])
-            else:
-                all_paths.extend(segment_result['path'][1:])
-
-            total_cost += segment_result['total_cost']
-
-        # Create combined path result
-        path_result = {
-            'path': all_paths,
-            'total_cost': total_cost,
-            'distance': len(all_paths)
-        }
-
-        # Convert pixel path to geographic coordinates
-        path_coords = pathfinder.path_to_coordinates(
-            path_result['path'], bounds, 30
-        )
-
-        # Simplify path to reduce points (use lower tolerance to keep more points)
         simplified_path = pathfinder.simplify_path(path_result['path'], tolerance=1)
         simplified_coords = pathfinder.path_to_coordinates(simplified_path, bounds, 30)
 
-        # Engineering validation - use full path for accurate tower placement
         validator = EngineeringValidator(current_app.config)
         validation_result = validator.validate_route(path_coords)
-
-        # Generate tower positions - use full path for proper spacing
         tower_positions = validator.generate_tower_positions(path_coords)
-
-        # Calculate detailed costs
         detailed_costs = validator.calculate_detailed_costs(path_coords, tower_positions)
 
-        # Create GeoJSON
         route_geojson = {
             'type': 'Feature',
             'properties': {
@@ -245,7 +259,8 @@ def optimize_route(project_id):
                 'length_m': validation_result['metrics']['total_length_m'],
                 'length_km': detailed_costs['total_length_km'],
                 'estimated_towers': len(tower_positions),
-                'avg_span_length_m': detailed_costs['avg_span_length_m']
+                'avg_span_length_m': detailed_costs['avg_span_length_m'],
+                'algorithm': chosen_algorithm,
             },
             'geometry': {
                 'type': 'LineString',
@@ -253,33 +268,33 @@ def optimize_route(project_id):
             }
         }
 
-        # Save route
         route = Route(
             project_id=project.id,
             total_length=validation_result['metrics']['total_length_m'],
             total_cost=detailed_costs['total_cost'],
             estimated_towers=len(tower_positions),
             is_valid=validation_result['is_valid'],
-            algorithm='dijkstra'
+            algorithm=chosen_algorithm
         )
         route.set_geometry(route_geojson)
         route.set_validation_errors(validation_result['errors'])
-
         db.session.add(route)
-
-        # Update project status
         project.status = 'completed'
         db.session.commit()
 
-        return jsonify({
+        response = {
             'message': 'Route optimized successfully',
             'route_id': route.id,
             'route': route_geojson,
             'tower_positions': tower_positions,
             'validation': validation_result,
             'cost_breakdown': detailed_costs,
-            'metadata': metadata
-        })
+            'metadata': proj_metadata,
+            'algorithm_used': chosen_algorithm,
+        }
+        if comparison:
+            response['algorithm_comparison'] = comparison
+        return jsonify(response)
 
     except Exception as e:
         import traceback
@@ -370,10 +385,11 @@ def generate_towers(project_id):
 @login_required
 def export_route(route_id):
     """
-    Export route as Shapefile or GeoJSON
+    Export route as GeoJSON or XYZ (Eastings, Northings, elevation).
 
     Query params:
-        format: 'geojson' or 'shapefile' (default: geojson)
+        format: 'geojson' (default), 'xyz'
+        crs: for xyz, 'EPSG:21096' (UTM 36N Uganda) or leave default
     """
     route = Route.query.get_or_404(route_id)
     project = Project.query.get(route.project_id)
@@ -382,18 +398,158 @@ def export_route(route_id):
         return jsonify({'error': 'Unauthorized'}), 403
 
     export_format = request.args.get('format', 'geojson')
+    geojson = route.get_geometry()
+    coords_wgs84 = geojson['geometry']['coordinates']  # list of [lon, lat]
 
     if export_format == 'geojson':
-        # Return GeoJSON directly
-        geojson = route.get_geometry()
         return jsonify(geojson)
 
-    elif export_format == 'shapefile':
-        # TODO: Implement shapefile export using geopandas
+    if export_format == 'xyz':
+        # XYZ = Eastings, Northings, elevation (for simulation)
+        try:
+            import pyproj
+            from pyproj import Transformer
+        except ImportError:
+            return jsonify({
+                'crs': current_app.config.get('MAP_CRS', 'EPSG:4326'),
+                'crs_description': 'pyproj not installed. Coordinates in lon, lat, elevation (elevation placeholder 0).',
+                'coordinates': [[c[0], c[1], 0.0] for c in coords_wgs84]
+            })
+        target_crs = request.args.get('crs') or current_app.config.get('PREFERRED_PROJECTED_CRS', 'EPSG:21096')
+        transformer = Transformer.from_crs('EPSG:4326', target_crs, always_xy=True)
+        xyz = []
+        for lon, lat in coords_wgs84:
+            easting, northing = transformer.transform(lon, lat)
+            xyz.append([easting, northing, 0.0])  # elevation 0 without DEM lookup
+        return jsonify({
+            'crs': target_crs,
+            'crs_description': 'Eastings, Northings, elevation (m). Elevation 0 if not from DEM.',
+            'coordinates': xyz
+        })
+
+    if export_format == 'shapefile':
         return jsonify({'error': 'Shapefile export not yet implemented'}), 501
 
-    else:
-        return jsonify({'error': 'Invalid format. Use geojson or shapefile'}), 400
+    return jsonify({'error': 'Invalid format. Use geojson or xyz'}), 400
+
+
+@api_bp.route('/layers', methods=['GET'])
+@login_required
+def get_layers():
+    """
+    Return GIS layer data for map display (DEM, land use, settlements, protected areas, roads).
+    Query params: min_lon, min_lat, max_lon, max_lat (map bounds), layers (optional comma-separated, default all).
+    Data sources: demo/synthetic; in production replace with USGS DEM, ESA WorldCover, NEMA/NFA/UWA, OSM.
+    """
+    try:
+        min_lon = float(request.args.get('min_lon', 32.0))
+        min_lat = float(request.args.get('min_lat', 3.2))
+        max_lon = float(request.args.get('max_lon', 32.6))
+        max_lat = float(request.args.get('max_lat', 3.6))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid bounds. Provide min_lon, min_lat, max_lon, max_lat.'}), 400
+    bounds = [min_lon, min_lat, max_lon, max_lat]
+    requested = request.args.get('layers', 'dem,land_use,settlements,protected_areas,roads')
+    requested = [s.strip() for s in requested.split(',') if s.strip()]
+
+    # Prefer real data if present; fall back to demo if not.
+    # Use a smaller grid for map display to keep responses light.
+    out_shape = (60, 60)
+    try:
+        layers_data = load_layers_for_bounds(current_app.config, tuple(bounds), out_shape)
+    except Exception:
+        layers_data = {}
+    if not layers_data:
+        layers_data = _create_demo_layers(bounds, current_app.config)
+    result = {}
+    min_lon, min_lat, max_lon, max_lat = bounds
+    height, width = layers_data['dem'].shape
+    lon_per_pixel = (max_lon - min_lon) / width
+    lat_per_pixel = (max_lat - min_lat) / height
+    # Limit resolution for response size (max ~80x80 grid)
+    step = max(1, min(height // 50, width // 50))
+
+    if 'dem' in requested and 'dem' in layers_data:
+        features = []
+        dem = layers_data['dem']
+        for r in range(0, height, step):
+            for c in range(0, width, step):
+                lat = max_lat - r * lat_per_pixel
+                lon = min_lon + c * lon_per_pixel
+                elev = float(dem[r, c])
+                features.append({
+                    'type': 'Feature',
+                    'geometry': {'type': 'Point', 'coordinates': [lon, lat]},
+                    'properties': {'elevation': elev}
+                })
+        result['dem'] = {'type': 'FeatureCollection', 'features': features}
+
+    if 'land_use' in requested and 'land_use' in layers_data:
+        features = []
+        lu = layers_data['land_use']
+        classes = {10: 'Tree cover', 30: 'Grassland', 40: 'Cropland', 50: 'Built-up', 80: 'Water', 90: 'Wetlands'}
+        for r in range(0, height, step):
+            for c in range(0, width, step):
+                lat = max_lat - r * lat_per_pixel
+                lon = min_lon + c * lon_per_pixel
+                cl = int(lu[r, c])
+                features.append({
+                    'type': 'Feature',
+                    'geometry': {'type': 'Point', 'coordinates': [lon, lat]},
+                    'properties': {'class': cl, 'label': classes.get(cl, 'Other')}
+                })
+        result['land_use'] = {'type': 'FeatureCollection', 'features': features}
+
+    if 'settlements' in requested and 'settlements' in layers_data:
+        features = []
+        st = layers_data['settlements']
+        for r in range(0, height, step):
+            for c in range(0, width, step):
+                if st[r, c] > 0:
+                    lat = max_lat - r * lat_per_pixel
+                    lon = min_lon + c * lon_per_pixel
+                    features.append({
+                        'type': 'Feature',
+                        'geometry': {'type': 'Point', 'coordinates': [lon, lat]},
+                        'properties': {'type': 'settlement'}
+                    })
+        result['settlements'] = {'type': 'FeatureCollection', 'features': features}
+
+    if 'protected_areas' in requested and 'protected_areas' in layers_data:
+        features = []
+        pa = layers_data['protected_areas']
+        for r in range(0, height, step):
+            for c in range(0, width, step):
+                if pa[r, c] > 0:
+                    lat = max_lat - r * lat_per_pixel
+                    lon = min_lon + c * lon_per_pixel
+                    features.append({
+                        'type': 'Feature',
+                        'geometry': {'type': 'Point', 'coordinates': [lon, lat]},
+                        'properties': {'type': 'protected'}
+                    })
+        result['protected_areas'] = {'type': 'FeatureCollection', 'features': features}
+
+    if 'roads' in requested and 'roads' in layers_data:
+        features = []
+        rd = layers_data['roads']
+        for r in range(0, height, step):
+            for c in range(0, width, step):
+                if rd[r, c] > 0:
+                    lat = max_lat - r * lat_per_pixel
+                    lon = min_lon + c * lon_per_pixel
+                    features.append({
+                        'type': 'Feature',
+                        'geometry': {'type': 'Point', 'coordinates': [lon, lat]},
+                        'properties': {'type': 'road'}
+                    })
+        result['roads'] = {'type': 'FeatureCollection', 'features': features}
+
+    return jsonify({
+        'crs': current_app.config.get('MAP_CRS', 'EPSG:4326'),
+        'bounds': bounds,
+        'layers': result
+    })
 
 
 @api_bp.route('/routes/<int:route_id>/corridor', methods=['GET'])
@@ -445,6 +601,19 @@ def _create_demo_layers(bounds, config):
         'protected_areas': protected_areas,
         'roads': roads
     }
+
+
+def _shape_from_bounds(bounds, resolution_m: float = 30) -> tuple:
+    """
+    Compute a raster shape (height, width) for given WGS84 bounds and meter resolution.
+    Uses a simple 111,320 m/degree approximation (consistent with existing demo code).
+    """
+    min_lon, min_lat, max_lon, max_lat = bounds
+    width = int((max_lon - min_lon) * 111320 / resolution_m)
+    height = int((max_lat - min_lat) * 111320 / resolution_m)
+    width = max(1, width)
+    height = max(1, height)
+    return (height, width)
 
 
 def _geo_to_pixel(lon, lat, bounds, shape):

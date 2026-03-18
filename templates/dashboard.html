@@ -35,12 +35,15 @@
         <div class="dashboard-content">
             <!-- Sidebar -->
             <aside class="sidebar">
+                <div class="sidebar-section crs-notice">
+                    <p class="help-text"><strong>Coordinate reference system:</strong> WGS 84 (EPSG:4326). Export available in Eastings, Northings, elevation (UTM 36N / EPSG:21096) for simulation.</p>
+                </div>
                 <div class="sidebar-section">
                     <h3>Project Setup</h3>
                     
                     <div class="form-group">
                         <label>Project Name</label>
-                        <input type="text" id="projectName" value="Olwiyo-South Sudan Line" class="form-control">
+                        <input type="text" id="projectName" placeholder="Enter project name" class="form-control">
                     </div>
                     
                     <div class="form-group">
@@ -63,15 +66,16 @@
                 
                 <div class="sidebar-section">
                     <h3>Route Points</h3>
+                    <p class="help-text">Set start, way and end points on the map. None are preset.</p>
 
                     <div class="point-info">
-                        <strong>Start: Olwiyo Substation</strong>
-                        <div id="startCoords">Lat: 3.3833, Lon: 32.5667</div>
+                        <strong>Start Point</strong>
+                        <div id="startCoords">Not set — click "Set Start Point" then click map</div>
                     </div>
 
                     <div class="point-info">
-                        <strong>End: South Sudan Border</strong>
-                        <div id="endCoords">Lat: 3.5833, Lon: 32.1167</div>
+                        <strong>End Point</strong>
+                        <div id="endCoords">Not set — click "Set End Point" then click map</div>
                     </div>
 
                     <button id="setStartBtn" class="btn btn-sm">Set Start Point</button>
@@ -134,6 +138,20 @@
                 </div>
                 
                 <div class="sidebar-section">
+                    <h3>Optimizer</h3>
+                    <div class="form-group">
+                        <label>Pathfinding algorithm</label>
+                        <select id="algorithmSelect" class="form-control">
+                            <option value="dijkstra">Dijkstra (LCP)</option>
+                            <option value="astar">A* (Pathfinder)</option>
+                        </select>
+                        <p class="help-text" style="font-size: 11px; margin-top: 4px;">A* uses a heuristic for faster search; compare both to verify results match your weights.</p>
+                    </div>
+                    <div class="form-group checkbox">
+                        <label>
+                            <input type="checkbox" id="compareAlgorithms"> Compare both algorithms (Dijkstra vs A*)
+                        </label>
+                    </div>
                     <button id="optimizeBtn" class="btn btn-primary btn-large">
                         🚀 Optimize Route
                     </button>
@@ -155,7 +173,8 @@
                     <h4 style="margin-top: 20px;">Cost Breakdown</h4>
                     <div id="costBreakdown" class="cost-breakdown"></div>
 
-                    <button id="exportBtn" class="btn btn-secondary">Export Route</button>
+                    <button id="exportBtn" class="btn btn-secondary">Export GeoJSON</button>
+                    <button id="exportXyzBtn" class="btn btn-secondary">Export XYZ (E/N/Elev)</button>
                     <button id="viewCorridorBtn" class="btn btn-secondary">View Corridor</button>
                 </div>
             </aside>
@@ -167,14 +186,15 @@
                 <!-- Map Controls -->
                 <div class="map-controls">
                     <div class="control-group">
+                        <p class="help-text" style="margin-bottom: 8px; font-size: 11px;">Select layers to display (none preset)</p>
                         <label>
-                            <input type="checkbox" id="showDEM" checked> DEM/Topography
+                            <input type="checkbox" id="showDEM"> DEM/Topography
                         </label>
                         <label>
-                            <input type="checkbox" id="showLandUse" checked> Land Use
+                            <input type="checkbox" id="showLandUse"> Land Use
                         </label>
                         <label>
-                            <input type="checkbox" id="showSettlements" checked> Settlements
+                            <input type="checkbox" id="showSettlements"> Settlements
                         </label>
                         <label>
                             <input type="checkbox" id="showProtected"> Protected Areas

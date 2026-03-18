@@ -10,7 +10,8 @@
     <div class="login-container">
         <div class="login-box">
             <div class="logo">
-                <img src="{{ url_for('static', filename='images/uetcl_logo.png') }}" alt="UETCL Logo" class="login-logo" onerror="this.style.display='none'">
+                <img src="{{ url_for('static', filename='images/uetcl_logo.png') }}" alt="UETCL Logo" class="login-logo" onerror="this.style.display='none'; document.querySelector('.logo-fallback').style.display='block';">
+                <span class="logo-fallback">UETCL</span>
                 <h1>⚡ Transmission Line Routing</h1>
                 <p class="company-name-login">Uganda Electricity Transmission Company Limited (UETCL)</p>
             </div>

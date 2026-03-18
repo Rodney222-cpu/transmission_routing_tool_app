@@ -43,8 +43,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Generate towers button
     document.getElementById('generateTowersBtn')?.addEventListener('click', generateTowers);
 
-    // Export button
-    document.getElementById('exportBtn')?.addEventListener('click', exportRoute);
+    // Export buttons
+    document.getElementById('exportBtn')?.addEventListener('click', () => exportRoute('geojson'));
+    document.getElementById('exportXyzBtn')?.addEventListener('click', () => exportRoute('xyz'));
 
     // View corridor button
     document.getElementById('viewCorridorBtn')?.addEventListener('click', viewCorridor);
@@ -189,6 +190,11 @@ function updateWaypointName(waypointId, newName) {
  * Optimize route using API
  */
 async function optimizeRoute() {
+    // Require user to set start and end points (no presets)
+    if (!currentProject.start || !currentProject.end) {
+        alert('Please set both Start Point and End Point on the map before optimizing.');
+        return;
+    }
     // Validate weights
     const sum = Object.values(ahpWeights).reduce((a, b) => a + b, 0);
     if (Math.abs(sum - 1.0) > 0.01) {
@@ -240,13 +246,16 @@ async function optimizeRoute() {
         currentProject.projectId = createResult.project_id;
         console.log('Project created with ID:', currentProject.projectId);
 
-        // Step 2: Optimize route
-        console.log('Starting optimization for project:', currentProject.projectId);
+        // Step 2: Optimize route (with optional algorithm and compare)
+        const algorithm = document.getElementById('algorithmSelect')?.value || 'dijkstra';
+        const compare = document.getElementById('compareAlgorithms')?.checked || false;
+        console.log('Starting optimization for project:', currentProject.projectId, 'algorithm:', algorithm, 'compare:', compare);
         const optimizeResponse = await fetch(`/api/projects/${currentProject.projectId}/optimize`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
-            }
+            },
+            body: JSON.stringify({ algorithm: algorithm, compare: compare })
         });
 
         if (!optimizeResponse.ok) {
@@ -260,8 +269,18 @@ async function optimizeRoute() {
         // Display route on map (without towers initially)
         displayRoute(result.route, []);
 
-        // Display results
+        // Display results (include algorithm used and comparison if present)
         displayResults(result);
+
+        if (result.algorithm_comparison) {
+            const comp = result.algorithm_comparison;
+            let msg = 'Algorithm comparison:\n';
+            if (comp.dijkstra) msg += `Dijkstra: cost=${comp.dijkstra.total_cost.toFixed(0)}, points=${comp.dijkstra.path_coords_count}\n`;
+            else msg += 'Dijkstra: no path\n';
+            if (comp.astar) msg += `A*: cost=${comp.astar.total_cost.toFixed(0)}, points=${comp.astar.path_coords_count}`;
+            else msg += 'A*: no path';
+            console.log(msg);
+        }
 
         // Show the "Generate Towers" button
         document.getElementById('generateTowersBtn').style.display = 'block';
@@ -328,6 +347,9 @@ function displayResults(result) {
     const costBreakdown = result.cost_breakdown;
 
     let html = '<div class="metrics">';
+    if (result.algorithm_used) {
+        html += `<p><strong>Algorithm:</strong> ${result.algorithm_used}</p>`;
+    }
     html += `<p><strong>Route Length:</strong> ${(metrics.total_length_km).toFixed(2)} km</p>`;
     html += `<p><strong>Estimated Towers:</strong> ${result.route.properties.estimated_towers}</p>`;
     html += `<p><strong>Avg Span Length:</strong> ${result.route.properties.avg_span_length_m.toFixed(1)} m</p>`;
@@ -426,31 +448,36 @@ function displayCostBreakdown(costBreakdown) {
 }
 
 /**
- * Export route as GeoJSON
+ * Export route as GeoJSON or XYZ (Eastings, Northings, elevation for simulation)
  */
-async function exportRoute() {
+async function exportRoute(format) {
     if (!currentProject.projectId) {
         alert('No route to export');
         return;
     }
-    
+    const fmt = format || 'geojson';
     try {
-        // Get routes for project
-        const response = await fetch(`/api/projects/${currentProject.projectId}/routes`);
-        const data = await response.json();
-        
-        if (data.routes && data.routes.length > 0) {
-            const route = data.routes[0];
-            
-            // Download as GeoJSON
-            const blob = new Blob([JSON.stringify(route.geometry, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'transmission_line_route.geojson';
-            a.click();
-            URL.revokeObjectURL(url);
+        const routesResponse = await fetch(`/api/projects/${currentProject.projectId}/routes`);
+        const routesData = await routesResponse.json();
+        if (!routesData.routes || routesData.routes.length === 0) {
+            alert('No route to export');
+            return;
         }
+        const routeId = routesData.routes[0].id;
+        const exportUrl = `/api/routes/${routeId}/export?format=${fmt}`;
+        const res = await fetch(exportUrl);
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.error || 'Export failed');
+            return;
+        }
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fmt === 'xyz' ? 'route_xyz_epsg21096.json' : 'transmission_line_route.geojson';
+        a.click();
+        URL.revokeObjectURL(url);
     } catch (error) {
         console.error('Export error:', error);
         alert('Failed to export route');
