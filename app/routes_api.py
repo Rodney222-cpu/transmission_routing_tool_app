@@ -17,8 +17,30 @@ from app.optimizer.astar import AStarPathFinder
 from app.optimizer.engineering_validation import EngineeringValidator
 from app.services.corridor_restriction import CorridorRestrictionService
 from app.services.gis_data_loader import load_layers_for_bounds
+from app.services.uganda_gis_loader import UgandaGISLoader
 
 api_bp = Blueprint('api', __name__)
+
+
+def convert_numpy_types(obj):
+    """
+    Recursively convert numpy types to native Python types for JSON serialization.
+    Handles: numpy.float32, numpy.float64, numpy.int32, numpy.int64, numpy.ndarray, etc.
+    """
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_numpy_types(item) for item in obj)
+    else:
+        return obj
 
 
 @api_bp.route('/projects', methods=['GET'])
@@ -111,34 +133,38 @@ def create_project():
 
 def _run_pathfinder(cost_surface, bounds, route_points, algorithm):
     """Run dijkstra or astar and return path_result, path_coords, pathfinder for a single algorithm."""
-    if algorithm == 'astar':
-        pathfinder = AStarPathFinder(cost_surface)
-    else:
-        pathfinder = LeastCostPathFinder(cost_surface)
-
-    all_paths = []
-    total_cost = 0
-    for i in range(len(route_points) - 1):
-        segment_start_pixel = _geo_to_pixel(
-            route_points[i]['lon'], route_points[i]['lat'],
-            bounds, cost_surface.shape
-        )
-        segment_end_pixel = _geo_to_pixel(
-            route_points[i + 1]['lon'], route_points[i + 1]['lat'],
-            bounds, cost_surface.shape
-        )
-        segment_result = pathfinder.find_path(segment_start_pixel, segment_end_pixel)
-        if segment_result is None:
-            return None, None, None
-        if i == 0:
-            all_paths.extend(segment_result['path'])
+    try:
+        if algorithm == 'astar':
+            pathfinder = AStarPathFinder(cost_surface)
         else:
-            all_paths.extend(segment_result['path'][1:])
-        total_cost += segment_result['total_cost']
+            pathfinder = LeastCostPathFinder(cost_surface)
 
-    path_result = {'path': all_paths, 'total_cost': total_cost, 'distance': len(all_paths)}
-    path_coords = pathfinder.path_to_coordinates(path_result['path'], bounds, 30)
-    return path_result, path_coords, pathfinder
+        all_paths = []
+        total_cost = 0
+        for i in range(len(route_points) - 1):
+            segment_start_pixel = _geo_to_pixel(
+                route_points[i]['lon'], route_points[i]['lat'],
+                bounds, cost_surface.shape
+            )
+            segment_end_pixel = _geo_to_pixel(
+                route_points[i + 1]['lon'], route_points[i + 1]['lat'],
+                bounds, cost_surface.shape
+            )
+            segment_result = pathfinder.find_path(segment_start_pixel, segment_end_pixel)
+            if segment_result is None:
+                return None, None, None
+            if i == 0:
+                all_paths.extend(segment_result['path'])
+            else:
+                all_paths.extend(segment_result['path'][1:])
+            total_cost += segment_result['total_cost']
+
+        path_result = {'path': all_paths, 'total_cost': total_cost, 'distance': len(all_paths)}
+        path_coords = pathfinder.path_to_coordinates(path_result['path'], bounds, 30)
+        return path_result, path_coords, pathfinder
+    except MemoryError as e:
+        print(f"❌ Memory error in pathfinding: {str(e)}")
+        raise MemoryError("Route area too large for pathfinding. Please reduce distance or add waypoints.")
 
 
 @api_bp.route('/projects/<int:project_id>/optimize', methods=['POST'])
@@ -161,6 +187,12 @@ def optimize_route(project_id):
     compare = data.get('compare', False)
 
     try:
+        # Validate project has required coordinates
+        if project.start_lat is None or project.start_lon is None:
+            return jsonify({'error': 'Start point not set'}), 400
+        if project.end_lat is None or project.end_lon is None:
+            return jsonify({'error': 'End point not set'}), 400
+
         project.status = 'processing'
         db.session.commit()
 
@@ -180,10 +212,25 @@ def optimize_route(project_id):
         data_source = "demo"
         try:
             shape = _shape_from_bounds(bounds, resolution_m=30)
+
+            # Check if shape is reasonable
+            height, width = shape
+            total_pixels = height * width
+            estimated_memory_mb = (total_pixels * 8) / (1024 * 1024)  # 8 bytes per float64
+
+            print(f"📊 Raster dimensions: {width} × {height} = {total_pixels:,} pixels")
+            print(f"💾 Estimated memory: {estimated_memory_mb:.1f} MB")
+
             layers_data = load_layers_for_bounds(current_app.config, tuple(bounds), shape)
             if layers_data:
                 data_source = "real"
-        except Exception:
+        except MemoryError as e:
+            print(f"❌ Memory error: {str(e)}")
+            return jsonify({
+                'error': 'Route area too large. Please reduce the distance between start and end points, or add waypoints to break the route into smaller segments.'
+            }), 400
+        except Exception as e:
+            print(f"⚠️ Error loading layers: {str(e)}")
             layers_data = {}
             data_source = "demo"
         if not layers_data:
@@ -222,12 +269,20 @@ def optimize_route(project_id):
         chosen_algorithm = algorithm
 
         if compare:
+            # Create validator for distance calculations
+            temp_validator = EngineeringValidator(current_app.config)
+
             for algo in ('dijkstra', 'astar'):
                 pr, pc, pf = _run_pathfinder(cost_surface, bounds, route_points, algo)
                 if pr is not None:
+                    # Calculate actual distance in kilometers
+                    distance_m = temp_validator._calculate_route_length(pc)
+                    distance_km = distance_m / 1000.0
+
                     comparison[algo] = {
                         'total_cost': pr['total_cost'],
                         'path_length_pixels': pr['distance'],
+                        'distance_km': distance_km,
                         'path_coords_count': len(pc),
                     }
                 else:
@@ -294,6 +349,10 @@ def optimize_route(project_id):
         }
         if comparison:
             response['algorithm_comparison'] = comparison
+
+        # Convert all numpy types to native Python types for JSON serialization
+        response = convert_numpy_types(response)
+
         return jsonify(response)
 
     except Exception as e:
@@ -607,10 +666,36 @@ def _shape_from_bounds(bounds, resolution_m: float = 30) -> tuple:
     """
     Compute a raster shape (height, width) for given WGS84 bounds and meter resolution.
     Uses a simple 111,320 m/degree approximation (consistent with existing demo code).
+    Automatically adjusts resolution for large areas to prevent memory issues.
     """
     min_lon, min_lat, max_lon, max_lat = bounds
+
+    # Calculate initial dimensions
     width = int((max_lon - min_lon) * 111320 / resolution_m)
     height = int((max_lat - min_lat) * 111320 / resolution_m)
+
+    # Limit maximum dimensions to prevent memory issues
+    MAX_DIMENSION = 2000  # Maximum pixels in any dimension
+    MAX_TOTAL_PIXELS = 2000 * 2000  # Maximum total pixels (4 million)
+
+    # If dimensions are too large, adjust resolution
+    if width > MAX_DIMENSION or height > MAX_DIMENSION or (width * height) > MAX_TOTAL_PIXELS:
+        # Calculate required resolution to fit within limits
+        scale_factor_width = width / MAX_DIMENSION if width > MAX_DIMENSION else 1
+        scale_factor_height = height / MAX_DIMENSION if height > MAX_DIMENSION else 1
+        scale_factor_total = ((width * height) / MAX_TOTAL_PIXELS) ** 0.5 if (width * height) > MAX_TOTAL_PIXELS else 1
+
+        scale_factor = max(scale_factor_width, scale_factor_height, scale_factor_total)
+
+        # Adjust resolution
+        adjusted_resolution = resolution_m * scale_factor
+        width = int((max_lon - min_lon) * 111320 / adjusted_resolution)
+        height = int((max_lat - min_lat) * 111320 / adjusted_resolution)
+
+        print(f"⚠️ Large area detected! Adjusted resolution from {resolution_m}m to {adjusted_resolution:.1f}m")
+        print(f"   Original size would be: {int((max_lon - min_lon) * 111320 / resolution_m)} × {int((max_lat - min_lat) * 111320 / resolution_m)}")
+        print(f"   Adjusted size: {width} × {height}")
+
     width = max(1, width)
     height = max(1, height)
     return (height, width)
@@ -629,4 +714,46 @@ def _geo_to_pixel(lon, lat, bounds, shape):
     row = max(0, min(height - 1, row))
 
     return (row, col)
+
+
+@api_bp.route('/gis/layers/<layer_name>', methods=['GET'])
+@login_required
+def get_gis_layer(layer_name):
+    """
+    Get GIS layer as GeoJSON for map display
+
+    Query params:
+        - min_lon, min_lat, max_lon, max_lat: Bounding box
+
+    Supported layers:
+        - settlements, roads, protected_areas, water, forests, power, education, airports, dem
+    """
+    try:
+        # Get bounds from query params
+        min_lon = float(request.args.get('min_lon', 32.0))
+        min_lat = float(request.args.get('min_lat', 3.0))
+        max_lon = float(request.args.get('max_lon', 33.0))
+        max_lat = float(request.args.get('max_lat', 4.0))
+
+        bounds = (min_lon, min_lat, max_lon, max_lat)
+
+        # Load GIS data
+        loader = UgandaGISLoader(current_app.config)
+        geojson = loader.load_layer_geojson(layer_name, bounds)
+
+        if geojson:
+            return jsonify(geojson)
+        else:
+            # Return empty FeatureCollection if no data
+            return jsonify({
+                'type': 'FeatureCollection',
+                'features': []
+            })
+
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to load layer: {str(e)}',
+            'type': 'FeatureCollection',
+            'features': []
+        }), 500
 

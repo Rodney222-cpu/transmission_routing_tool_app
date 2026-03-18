@@ -35,12 +35,14 @@ class AStarPathFinder:
         """
         Find least-cost path using A*.
         Returns same structure as LeastCostPathFinder for drop-in comparison.
+        Memory-optimized: uses dictionary instead of full array for g_cost.
         """
         if not self._is_valid_position(start) or not self._is_valid_position(end):
             return None
 
-        g_cost = np.full((self.height, self.width), np.inf)
-        g_cost[start] = 0
+        # Use dictionary instead of full array to save memory
+        # Only stores costs for visited nodes instead of all possible nodes
+        g_cost = {start: 0}
         parent = {}
         # Priority: f = g + h (heap by f, then by g for tie-breaking)
         open_set = [(0 + self._heuristic(start, end), 0, start[0], start[1])]
@@ -76,7 +78,8 @@ class AStarPathFinder:
                 movement = self.direction_costs[i]
                 new_g = current_cost + (movement * terrain_cost)
 
-                if new_g < g_cost[neighbor]:
+                # Use dictionary.get() with infinity as default
+                if new_g < g_cost.get(neighbor, np.inf):
                     g_cost[neighbor] = new_g
                     parent[neighbor] = current
                     h = self._heuristic(neighbor, end)

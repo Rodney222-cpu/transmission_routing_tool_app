@@ -36,7 +36,12 @@
             <!-- Sidebar -->
             <aside class="sidebar">
                 <div class="sidebar-section crs-notice">
-                    <p class="help-text"><strong>Coordinate reference system:</strong> WGS 84 (EPSG:4326). Export available in Eastings, Northings, elevation (UTM 36N / EPSG:21096) for simulation.</p>
+                    <h3>📍 Coordinate Reference System</h3>
+                    <p class="help-text">
+                        <strong>Map Display:</strong> WGS 84 (EPSG:4326)<br>
+                        <strong>Simulation Export:</strong> UTM Zone 36N (EPSG:21096)<br>
+                        <small>Coordinates shown as Latitude/Longitude. Export as Eastings, Northings, Elevation (XYZ) for engineering simulation.</small>
+                    </p>
                 </div>
                 <div class="sidebar-section">
                     <h3>Project Setup</h3>
@@ -88,7 +93,26 @@
                         <button id="addWaypointBtn" class="btn btn-sm" style="margin-top: 5px;">+ Add Waypoint</button>
                     </div>
                 </div>
-                
+
+                <div class="sidebar-section">
+                    <h3>Pathfinding Algorithm</h3>
+                    <p class="help-text">Choose algorithm for route optimization</p>
+                    <div class="algorithm-selector">
+                        <label>
+                            <input type="radio" name="algorithm" value="dijkstra" checked>
+                            <strong>Dijkstra</strong> - Standard least-cost path
+                        </label>
+                        <label>
+                            <input type="radio" name="algorithm" value="astar">
+                            <strong>A*</strong> - Heuristic-guided (faster)
+                        </label>
+                        <label>
+                            <input type="radio" name="algorithm" value="both">
+                            <strong>Both</strong> - Compare results
+                        </label>
+                    </div>
+                </div>
+
                 <div class="sidebar-section">
                     <h3>AHP Weights</h3>
                     <p class="help-text">Adjust weights for cost factors (must sum to 1.0)<br>

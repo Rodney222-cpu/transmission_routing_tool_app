@@ -41,11 +41,12 @@ class LeastCostPathFinder:
     def find_path(self, start: Tuple[int, int], end: Tuple[int, int]) -> Optional[dict]:
         """
         Find the least-cost path from start to end using Dijkstra's algorithm
-        
+        Memory-optimized: uses dictionary instead of full array for g_cost.
+
         Args:
             start: (row, col) starting position
             end: (row, col) ending position
-        
+
         Returns:
             dict containing:
                 - path: List of (row, col) coordinates
@@ -55,32 +56,32 @@ class LeastCostPathFinder:
         # Validate inputs
         if not self._is_valid_position(start) or not self._is_valid_position(end):
             return None
-        
+
         # Initialize data structures
-        # Cost to reach each cell (infinity initially)
-        g_cost = np.full((self.height, self.width), np.inf)
-        g_cost[start] = 0
-        
+        # Use dictionary instead of full array to save memory
+        # Only stores costs for visited nodes instead of all possible nodes
+        g_cost = {start: 0}
+
         # Parent tracking for path reconstruction
         parent = {}
-        
+
         # Priority queue: (cost, row, col)
         open_set = [(0, start[0], start[1])]
-        
+
         # Closed set to track visited nodes
         closed_set = set()
-        
+
         while open_set:
             current_cost, row, col = heapq.heappop(open_set)
             current = (row, col)
-            
+
             # Skip if already processed
             if current in closed_set:
                 continue
-            
+
             # Mark as visited
             closed_set.add(current)
-            
+
             # Check if we reached the goal
             if current == end:
                 path = self._reconstruct_path(parent, start, end)
@@ -90,38 +91,39 @@ class LeastCostPathFinder:
                     'distance': len(path),
                     'euclidean_distance': self._euclidean_distance(start, end)
                 }
-            
+
             # Explore neighbors
             for i, (dr, dc) in enumerate(self.directions):
                 neighbor_row = row + dr
                 neighbor_col = col + dc
                 neighbor = (neighbor_row, neighbor_col)
-                
+
                 # Skip invalid positions
                 if not self._is_valid_position(neighbor):
                     continue
-                
+
                 # Skip already visited
                 if neighbor in closed_set:
                     continue
-                
+
                 # Calculate cost to reach neighbor
                 # Cost = current cost + movement cost * terrain cost
                 movement_cost = self.direction_costs[i]
                 terrain_cost = self.cost_surface[neighbor_row, neighbor_col]
-                
+
                 # Handle invalid terrain (e.g., water bodies with very high cost)
                 if terrain_cost >= 99:  # Threshold for impassable terrain
                     continue
-                
+
                 new_cost = current_cost + (movement_cost * terrain_cost)
-                
+
                 # Update if we found a better path
-                if new_cost < g_cost[neighbor]:
+                # Use dictionary.get() with infinity as default
+                if new_cost < g_cost.get(neighbor, np.inf):
                     g_cost[neighbor] = new_cost
                     parent[neighbor] = current
                     heapq.heappush(open_set, (new_cost, neighbor_row, neighbor_col))
-        
+
         # No path found
         return None
     

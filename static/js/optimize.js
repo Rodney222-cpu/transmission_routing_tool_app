@@ -246,16 +246,31 @@ async function optimizeRoute() {
         currentProject.projectId = createResult.project_id;
         console.log('Project created with ID:', currentProject.projectId);
 
-        // Step 2: Optimize route (with optional algorithm and compare)
-        const algorithm = document.getElementById('algorithmSelect')?.value || 'dijkstra';
-        const compare = document.getElementById('compareAlgorithms')?.checked || false;
-        console.log('Starting optimization for project:', currentProject.projectId, 'algorithm:', algorithm, 'compare:', compare);
+        // Step 2: Optimize route (with algorithm selection)
+        const algorithmRadios = document.getElementsByName('algorithm');
+        let algorithm = 'dijkstra';
+        for (const radio of algorithmRadios) {
+            if (radio.checked) {
+                algorithm = radio.value;
+                break;
+            }
+        }
+
+        // Handle "both" option - run comparison
+        let requestBody = {};
+        if (algorithm === 'both') {
+            requestBody = { algorithm: 'dijkstra', compare: true };
+        } else {
+            requestBody = { algorithm: algorithm };
+        }
+
+        console.log('Starting optimization for project:', currentProject.projectId, 'request:', requestBody);
         const optimizeResponse = await fetch(`/api/projects/${currentProject.projectId}/optimize`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ algorithm: algorithm, compare: compare })
+            body: JSON.stringify(requestBody)
         });
 
         if (!optimizeResponse.ok) {
@@ -338,6 +353,196 @@ async function generateTowers() {
 }
 
 /**
+ * Generate user-friendly route quality assessment card
+ */
+function generateRouteQualityCard(errors, warnings, metrics) {
+    const errorCount = errors ? errors.length : 0;
+    const warningCount = warnings ? warnings.length : 0;
+
+    let status, statusIcon, statusColor, statusText, recommendation;
+
+    // Determine overall status
+    if (errorCount === 0 && warningCount === 0) {
+        status = 'excellent';
+        statusIcon = '✅';
+        statusColor = '#28a745';
+        statusText = 'Excellent - Ready to Build';
+        recommendation = 'This route meets all engineering standards and is ready for tower placement and construction planning.';
+    } else if (errorCount === 0 && warningCount > 0) {
+        status = 'good';
+        statusIcon = '⚠️';
+        statusColor = '#ffc107';
+        statusText = 'Good - Minor Concerns';
+        recommendation = 'This route is buildable but has some areas that may require extra attention during construction.';
+    } else if (errorCount <= 2) {
+        status = 'needs-adjustment';
+        statusIcon = '⚠️';
+        statusColor = '#ff9800';
+        statusText = 'Needs Adjustment';
+        recommendation = 'This route has some issues that should be fixed. Try adding waypoints to guide the route around problem areas.';
+    } else {
+        status = 'poor';
+        statusIcon = '❌';
+        statusColor = '#dc3545';
+        statusText = 'Not Recommended';
+        recommendation = 'This route has significant issues. Consider changing start/end points or adding waypoints to avoid difficult terrain.';
+    }
+
+    let html = `
+        <div class="route-quality-card" style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-left: 5px solid ${statusColor}; padding: 15px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <div style="font-size: 32px;">${statusIcon}</div>
+                <div>
+                    <h4 style="margin: 0; color: ${statusColor}; font-size: 16px;">Route Quality: ${statusText}</h4>
+                    <p style="margin: 5px 0 0 0; font-size: 12px; color: #6c757d;">${recommendation}</p>
+                </div>
+            </div>
+    `;
+
+    // Add simple summary boxes
+    html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px;">';
+
+    // Construction Feasibility
+    const feasibilityScore = errorCount === 0 ? 100 : Math.max(0, 100 - (errorCount * 20));
+    const feasibilityColor = feasibilityScore >= 80 ? '#28a745' : feasibilityScore >= 60 ? '#ffc107' : '#dc3545';
+    html += `
+        <div style="background: white; padding: 12px; border-radius: 6px; border: 2px solid ${feasibilityColor};">
+            <div style="font-size: 11px; color: #6c757d; margin-bottom: 4px;">CONSTRUCTION FEASIBILITY</div>
+            <div style="font-size: 24px; font-weight: bold; color: ${feasibilityColor};">${feasibilityScore}%</div>
+            <div style="font-size: 10px; color: #6c757d; margin-top: 4px;">${errorCount === 0 ? 'All checks passed' : errorCount + ' issue(s) found'}</div>
+        </div>
+    `;
+
+    // Route Complexity
+    const complexityLevel = warningCount === 0 ? 'Simple' : warningCount <= 2 ? 'Moderate' : 'Complex';
+    const complexityColor = warningCount === 0 ? '#28a745' : warningCount <= 2 ? '#ffc107' : '#ff9800';
+    html += `
+        <div style="background: white; padding: 12px; border-radius: 6px; border: 2px solid ${complexityColor};">
+            <div style="font-size: 11px; color: #6c757d; margin-bottom: 4px;">CONSTRUCTION COMPLEXITY</div>
+            <div style="font-size: 18px; font-weight: bold; color: ${complexityColor};">${complexityLevel}</div>
+            <div style="font-size: 10px; color: #6c757d; margin-top: 4px;">${warningCount === 0 ? 'Standard construction' : warningCount + ' consideration(s)'}</div>
+        </div>
+    `;
+
+    html += '</div>'; // Close grid
+
+    // Add specific issues in plain language (if any) - GROUPED to avoid repetition
+    if (errorCount > 0 || warningCount > 0) {
+        html += '<div style="margin-top: 12px; padding: 10px; background: white; border-radius: 6px;">';
+        html += '<div style="font-size: 12px; font-weight: 600; color: #495057; margin-bottom: 8px;">📋 Issue Summary:</div>';
+        html += '<ul style="margin: 0; padding-left: 20px; font-size: 11px; color: #6c757d;">';
+
+        if (errorCount > 0) {
+            // Group similar errors to avoid massive repetition
+            const errorSummary = groupSimilarMessages(errors, simplifyErrorMessage);
+            // Limit to top 5 most common issues
+            const topErrors = errorSummary.slice(0, 5);
+
+            topErrors.forEach(item => {
+                const countText = item.count > 1 ? ` <strong>(${item.count} times)</strong>` : '';
+                html += `<li style="margin: 4px 0; color: #dc3545;">${item.message}${countText}</li>`;
+            });
+
+            // Show if there are more issue types
+            if (errorSummary.length > 5) {
+                const remaining = errorSummary.length - 5;
+                html += `<li style="margin: 4px 0; color: #6c757d; font-style: italic;">...and ${remaining} other issue type(s)</li>`;
+            }
+        }
+
+        if (warningCount > 0) {
+            // Group similar warnings to avoid massive repetition
+            const warningSummary = groupSimilarMessages(warnings, simplifyWarningMessage);
+            // Limit to top 3 most common warnings
+            const topWarnings = warningSummary.slice(0, 3);
+
+            topWarnings.forEach(item => {
+                const countText = item.count > 1 ? ` <strong>(${item.count} times)</strong>` : '';
+                html += `<li style="margin: 4px 0; color: #856404;">${item.message}${countText}</li>`;
+            });
+
+            // Show if there are more warning types
+            if (warningSummary.length > 3) {
+                const remaining = warningSummary.length - 3;
+                html += `<li style="margin: 4px 0; color: #6c757d; font-style: italic;">...and ${remaining} other consideration(s)</li>`;
+            }
+        }
+
+        html += '</ul></div>';
+    }
+
+    // Add action buttons
+    if (errorCount > 0) {
+        html += `
+            <div style="margin-top: 12px; padding: 10px; background: #fff3cd; border-radius: 6px; border-left: 3px solid #ffc107;">
+                <div style="font-size: 11px; font-weight: 600; color: #856404; margin-bottom: 6px;">💡 How to Improve:</div>
+                <ul style="margin: 0; padding-left: 20px; font-size: 11px; color: #856404;">
+                    <li>Click on the map to add waypoints that guide the route around problem areas</li>
+                    <li>Try adjusting the start or end points slightly</li>
+                    <li>Increase weights for factors like "Topography" to avoid steep terrain</li>
+                </ul>
+            </div>
+        `;
+    }
+
+    html += '</div>'; // Close route-quality-card
+
+    return html;
+}
+
+/**
+ * Group similar messages to avoid repetition
+ * Returns array of {message: string, count: number}
+ */
+function groupSimilarMessages(messages, simplifyFunction) {
+    const grouped = {};
+
+    messages.forEach(msg => {
+        const simplified = simplifyFunction(msg);
+        if (grouped[simplified]) {
+            grouped[simplified]++;
+        } else {
+            grouped[simplified] = 1;
+        }
+    });
+
+    // Convert to array and sort by count (most common first)
+    return Object.entries(grouped)
+        .map(([message, count]) => ({ message, count }))
+        .sort((a, b) => b.count - a.count);
+}
+
+/**
+ * Simplify technical error messages into plain language
+ */
+function simplifyErrorMessage(error) {
+    if (error.includes('exceeds maximum') && error.includes('Span')) {
+        return '⚠️ Some tower distances are too far apart (may cause structural issues)';
+    } else if (error.includes('below minimum') && error.includes('Span')) {
+        return '⚠️ Some tower distances are too close together (inefficient)';
+    } else if (error.includes('Slope') && error.includes('exceeds')) {
+        return '⚠️ Route crosses very steep terrain (difficult to build)';
+    } else {
+        return '⚠️ ' + error;
+    }
+}
+
+/**
+ * Simplify technical warning messages into plain language
+ */
+function simplifyWarningMessage(warning) {
+    if (warning.includes('Corridor') && warning.includes('constrained')) {
+        return '💡 Route passes near buildings or settlements (may need land acquisition)';
+    } else if (warning.includes('terrain')) {
+        return '💡 Route crosses challenging terrain (may increase construction cost)';
+    } else if (warning.includes('water')) {
+        return '💡 Route crosses water bodies (may need special towers)';
+    } else {
+        return '💡 ' + warning;
+    }
+}
+
+/**
  * Display optimization results
  */
 function displayResults(result) {
@@ -357,23 +562,38 @@ function displayResults(result) {
     html += `<p><strong>Cost per km:</strong> $${(costBreakdown.cost_per_km / 1000).toFixed(0)}K</p>`;
     html += '</div>';
 
-    // Show errors
-    if (errors && errors.length > 0) {
-        html += '<div class="errors"><h4>⚠️ Errors:</h4><ul>';
-        errors.forEach(err => {
-            html += `<li>${err}</li>`;
-        });
-        html += '</ul></div>';
+    // Show algorithm comparison if both were run
+    if (result.algorithm_comparison) {
+        const comp = result.algorithm_comparison;
+        html += '<div class="algorithm-comparison">';
+        html += '<h4>📊 Algorithm Comparison</h4>';
+        html += '<table class="comparison-table">';
+        html += '<tr><th>Algorithm</th><th>Total Cost</th><th>Distance (km)</th><th>Path Points</th></tr>';
+
+        if (comp.dijkstra) {
+            html += `<tr>
+                <td><strong>Dijkstra</strong></td>
+                <td>$${(comp.dijkstra.total_cost || 0).toFixed(0)}</td>
+                <td>${(comp.dijkstra.distance_km || 0).toFixed(2)}</td>
+                <td>${comp.dijkstra.path_coords_count || 0}</td>
+            </tr>`;
+        }
+
+        if (comp.astar) {
+            html += `<tr>
+                <td><strong>A*</strong></td>
+                <td>$${(comp.astar.total_cost || 0).toFixed(0)}</td>
+                <td>${(comp.astar.distance_km || 0).toFixed(2)}</td>
+                <td>${comp.astar.path_coords_count || 0}</td>
+            </tr>`;
+        }
+
+        html += '</table>';
+        html += '</div>';
     }
 
-    // Show warnings
-    if (warnings && warnings.length > 0) {
-        html += '<div class="warnings"><h4>⚡ Warnings:</h4><ul>';
-        warnings.forEach(warn => {
-            html += `<li>${warn}</li>`;
-        });
-        html += '</ul></div>';
-    }
+    // Show user-friendly route quality assessment
+    html += generateRouteQualityCard(errors, warnings, metrics);
 
     document.getElementById('routeMetrics').innerHTML = html;
 
