@@ -16,18 +16,77 @@ body {
     background: #f5f5f5;
 }
 
-/* Login Page - UETCL customized: background image + company logo */
+/* Login Page - Transmission Line Themed Background */
 .login-page {
     display: flex;
     align-items: center;
     justify-content: center;
     min-height: 100vh;
-    background-color: #003366;
-    background-image: linear-gradient(135deg, rgba(0, 51, 102, 0.85) 0%, rgba(0, 102, 153, 0.85) 100%),
-                      url('../images/uetcl_background.jpg');
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
+    background: linear-gradient(135deg, #1a237e 0%, #0d47a1 50%, #01579b 100%);
+    position: relative;
+    overflow: hidden;
+}
+
+/* Transmission Tower Pattern Overlay */
+.login-page::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: 
+        /* Power lines - horizontal */
+        repeating-linear-gradient(0deg, 
+            transparent 0px, 
+            transparent 80px, 
+            rgba(255, 255, 255, 0.03) 80px, 
+            rgba(255, 255, 255, 0.03) 82px
+        ),
+        /* Power lines - diagonal */
+        repeating-linear-gradient(45deg, 
+            transparent 0px, 
+            transparent 120px, 
+            rgba(255, 255, 255, 0.02) 120px, 
+            rgba(255, 255, 255, 0.02) 122px
+        );
+    pointer-events: none;
+}
+
+/* Decorative transmission tower silhouettes */
+.login-page::after {
+    content: '⚡';
+    position: absolute;
+    font-size: 400px;
+    opacity: 0.03;
+    top: 10%;
+    right: -5%;
+    pointer-events: none;
+    transform: rotate(-15deg);
+}
+
+/* Left side decorative element - Tower silhouette */
+.login-decoration-left {
+    position: absolute;
+    left: 5%;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 150px;
+    height: 400px;
+    opacity: 0.1;
+    pointer-events: none;
+}
+
+/* Right side decorative element - Transformer */
+.login-decoration-right {
+    position: absolute;
+    right: 5%;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 150px;
+    height: 300px;
+    opacity: 0.1;
+    pointer-events: none;
 }
 
 .login-container {
