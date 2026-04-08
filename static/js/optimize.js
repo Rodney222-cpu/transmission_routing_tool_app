@@ -687,8 +687,6 @@ function displayResults(result) {
     document.getElementById('routeMetrics').innerHTML = html;
 
     // Create graphical charts
-    createQualityChart(errors, warnings, metrics, result.route.properties);
-    createSimpleCostSummary(costBreakdown);
     createDynamicAvoidanceChart(result);
     createElevationChart(result);
 
@@ -699,127 +697,8 @@ function displayResults(result) {
 }
 
 // Store chart instances to destroy before recreating
-let costChart = null;
-let qualityChart = null;
 let avoidanceChart = null;
 let elevationChart = null;
-
-/**
- * Create simple cost summary (replaces pie chart)
- */
-function createSimpleCostSummary(costBreakdown) {
-    const ctx = document.getElementById('costChart');
-    if (!ctx || !costBreakdown) return;
-    
-    // Destroy any existing chart
-    if (costChart) costChart.destroy();
-    
-    // Get parent container
-    const container = ctx.parentElement;
-    if (!container) return;
-    
-    // Create simple text summary instead of chart
-    const costPerKm = costBreakdown.cost_per_km || 0;
-    const totalKm = costBreakdown.total_length_km || 0;
-    
-    container.innerHTML = `
-        <div style="background: #f8f9fa; border-radius: 8px; padding: 15px; margin-top: 10px;">
-            <h5 style="margin: 0 0 10px 0; color: #333; font-size: 14px;">💰 Cost Summary</h5>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                <span style="color: #666;">Route Length:</span>
-                <span style="font-weight: bold;">${totalKm.toFixed(1)} km</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                <span style="color: #666;">Cost per km:</span>
-                <span style="font-weight: bold; color: #28a745;">$${(costPerKm / 1000).toFixed(0)}K</span>
-            </div>
-            <div style="border-top: 1px solid #ddd; padding-top: 8px; margin-top: 8px; display: flex; justify-content: space-between;">
-                <span style="color: #333; font-weight: 600;">Estimated Total:</span>
-                <span style="font-weight: bold; color: #1a1a1a; font-size: 16px;">$${(costBreakdown.total_cost / 1000000).toFixed(2)}M</span>
-            </div>
-            <p style="font-size: 11px; color: #888; margin: 10px 0 0 0; font-style: italic;">
-                *Cost estimate based on route length and terrain complexity
-            </p>
-        </div>
-    `;
-}
-
-/**
- * Create route quality metrics bar chart
- */
-function createQualityChart(errors, warnings, metrics, routeProps) {
-    const ctx = document.getElementById('qualityChart');
-    if (!ctx) return;
-
-    // Destroy existing chart
-    if (qualityChart) qualityChart.destroy();
-
-    // Calculate quality scores (0-100)
-    const errorCount = errors ? errors.length : 0;
-    const warningCount = warnings ? warnings.length : 0;
-
-    // Engineering quality (based on errors/warnings)
-    const engineeringQuality = Math.max(0, 100 - (errorCount * 20) - (warningCount * 5));
-
-    // Span quality (based on how close to optimal 350m)
-    const optimalSpan = 350;
-    const avgSpan = routeProps.avg_span_length_m || 0;
-    const spanDeviation = Math.abs(avgSpan - optimalSpan) / optimalSpan;
-    const spanQuality = Math.max(0, 100 - (spanDeviation * 100));
-
-    // Route efficiency (based on route straightness)
-    const routeEfficiency = Math.min(100, (metrics.total_length_km > 0 ? 85 : 0));
-
-    const data = {
-        labels: ['Engineering\nCompliance', 'Span Length\nOptimality', 'Route\nEfficiency'],
-        datasets: [{
-            label: 'Quality Score (%)',
-            data: [engineeringQuality, spanQuality, routeEfficiency],
-            backgroundColor: [
-                engineeringQuality >= 80 ? '#28a745' : engineeringQuality >= 60 ? '#ffc107' : '#dc3545',
-                spanQuality >= 80 ? '#28a745' : spanQuality >= 60 ? '#ffc107' : '#dc3545',
-                routeEfficiency >= 80 ? '#28a745' : routeEfficiency >= 60 ? '#ffc107' : '#dc3545'
-            ]
-        }]
-    };
-
-    qualityChart = new Chart(ctx, {
-        type: 'bar',
-        data: data,
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    max: 100,
-                    ticks: {
-                        callback: function(value) {
-                            return value + '%';
-                        }
-                    }
-                },
-                x: {
-                    ticks: {
-                        font: { size: 10 }
-                    }
-                }
-            },
-            plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            return 'Quality: ' + context.parsed.y.toFixed(1) + '%';
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
 
 /**
  * Create dynamic route optimality chart based on actual route data
