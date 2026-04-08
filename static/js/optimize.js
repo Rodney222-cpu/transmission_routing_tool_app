@@ -359,36 +359,54 @@ function generateRouteQualityCard(errors, warnings, metrics, result) {
     const errorCount = errors ? errors.length : 0;
     const warningCount = warnings ? warnings.length : 0;
 
+    // Get route characteristics for dynamic scoring
+    const costBreakdown = result?.cost_breakdown || {};
+    const routeElevation = result?.route_elevation || {};
+    
+    const costPerKm = costBreakdown.cost_per_km || 500000;
+    const totalKm = costBreakdown.total_length_km || 0;
+    const numTowers = costBreakdown.breakdown?.towers?.quantity || 0;
+    const avgSpan = totalKm > 0 && numTowers > 0 ? (totalKm * 1000) / numTowers : 350;
+    const elevationRange = (routeElevation.max_m || 1000) - (routeElevation.min_m || 1000);
+
     let status, statusIcon, statusColor, statusText, recommendation;
 
-    // Determine overall status based on CRITICAL errors only (ignore tower spacing warnings)
+    // Determine overall status based on route characteristics AND errors
     const criticalErrors = errors ? errors.filter(e => !e.toLowerCase().includes('too close')) : [];
     const criticalErrorCount = criticalErrors.length;
+    
+    // Calculate a route difficulty score (0-100, higher = easier)
+    const costScore = Math.max(0, 100 - (costPerKm / 12000)); // Higher cost = harder
+    const terrainScore = Math.min(100, (avgSpan / 350) * 100); // Closer to 350m = easier
+    const elevationScore = Math.max(0, 100 - (elevationRange / 10)); // Less variation = easier
+    const lengthScore = Math.max(0, 100 - (totalKm / 10)); // Shorter = easier
+    
+    const routeDifficultyScore = (costScore + terrainScore + elevationScore + lengthScore) / 4;
 
-    if (criticalErrorCount === 0 && warningCount === 0) {
+    if (criticalErrorCount === 0 && warningCount === 0 && routeDifficultyScore >= 70) {
         status = 'excellent';
         statusIcon = '✅';
         statusColor = '#28a745';
         statusText = 'Excellent - Ready to Build';
-        recommendation = 'This route meets all engineering standards and is ready for tower placement and construction planning.';
-    } else if (criticalErrorCount === 0 && warningCount > 0 && warningCount <= 5) {
+        recommendation = 'This route meets all engineering standards with favorable terrain. Ready for tower placement and construction planning.';
+    } else if (criticalErrorCount === 0 && routeDifficultyScore >= 50) {
         status = 'good';
         statusIcon = '✅';
         statusColor = '#28a745';
         statusText = 'Good - Buildable Route';
-        recommendation = 'This route is well-optimized and avoids major obstacles. Minor considerations noted for construction planning.';
-    } else if (criticalErrorCount <= 2) {
+        recommendation = `This ${totalKm.toFixed(0)}km route is well-optimized. ${warningCount > 0 ? warningCount + ' minor considerations noted.' : 'Standard construction feasible.'}`;
+    } else if (criticalErrorCount <= 2 && routeDifficultyScore >= 35) {
         status = 'needs-adjustment';
         statusIcon = '⚠️';
         statusColor = '#ffc107';
         statusText = 'Acceptable with Adjustments';
-        recommendation = 'This route is buildable. Some areas may require engineering attention during detailed design.';
+        recommendation = 'Route is buildable with some engineering considerations. Review terrain and tower placement.';
     } else {
         status = 'moderate';
         statusIcon = '⚠️';
         statusColor = '#ff9800';
-        statusText = 'Moderate Route Quality';
-        recommendation = 'This route is feasible. Consider adding waypoints for better optimization in complex terrain.';
+        statusText = 'Challenging Route';
+        recommendation = 'Complex terrain detected. Consider adding waypoints for better optimization.';
     }
 
     let html = `
@@ -405,25 +423,42 @@ function generateRouteQualityCard(errors, warnings, metrics, result) {
     // Add simple summary boxes
     html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px;">';
 
-    // Construction Feasibility - based on critical errors only
-    const feasibilityScore = criticalErrorCount === 0 ? 100 : Math.max(0, 100 - (criticalErrorCount * 15));
+    // Construction Feasibility - based on route characteristics AND errors
+    const feasibilityScore = Math.round(Math.max(0, Math.min(100, routeDifficultyScore - (criticalErrorCount * 10))));
     const feasibilityColor = feasibilityScore >= 80 ? '#28a745' : feasibilityScore >= 60 ? '#ffc107' : '#dc3545';
+    const feasibilityText = feasibilityScore >= 80 ? 'All checks passed' : feasibilityScore >= 60 ? 'Minor considerations' : 'Requires review';
     html += `
         <div style="background: white; padding: 12px; border-radius: 6px; border: 2px solid ${feasibilityColor};">
             <div style="font-size: 11px; color: #6c757d; margin-bottom: 4px;">CONSTRUCTION FEASIBILITY</div>
             <div style="font-size: 24px; font-weight: bold; color: ${feasibilityColor};">${feasibilityScore}%</div>
-            <div style="font-size: 10px; color: #6c757d; margin-top: 4px;">${criticalErrorCount === 0 ? 'All critical checks passed' : criticalErrorCount + ' critical issue(s)'}</div>
+            <div style="font-size: 10px; color: #6c757d; margin-top: 4px;">${feasibilityText}</div>
         </div>
     `;
 
-    // Route Complexity - more realistic
-    const complexityLevel = warningCount <= 5 ? 'Simple' : warningCount <= 10 ? 'Moderate' : 'Complex';
-    const complexityColor = warningCount <= 5 ? '#28a745' : warningCount <= 10 ? '#ffc107' : '#ff9800';
+    // Route Complexity - based on actual route data
+    let complexityLevel, complexityColor, complexityDesc;
+    if (routeDifficultyScore >= 70) {
+        complexityLevel = 'Simple';
+        complexityColor = '#28a745';
+        complexityDesc = 'Standard construction';
+    } else if (routeDifficultyScore >= 50) {
+        complexityLevel = 'Moderate';
+        complexityColor = '#ffc107';
+        complexityDesc = `${totalKm.toFixed(0)}km, ${elevationRange.toFixed(0)}m elevation change`;
+    } else if (routeDifficultyScore >= 35) {
+        complexityLevel = 'Complex';
+        complexityColor = '#ff9800';
+        complexityDesc = 'Challenging terrain';
+    } else {
+        complexityLevel = 'Difficult';
+        complexityColor = '#dc3545';
+        complexityDesc = 'Major engineering required';
+    }
     html += `
         <div style="background: white; padding: 12px; border-radius: 6px; border: 2px solid ${complexityColor};">
             <div style="font-size: 11px; color: #6c757d; margin-bottom: 4px;">CONSTRUCTION COMPLEXITY</div>
             <div style="font-size: 18px; font-weight: bold; color: ${complexityColor};">${complexityLevel}</div>
-            <div style="font-size: 10px; color: #6c757d; margin-top: 4px;">${warningCount <= 5 ? 'Standard construction' : warningCount + ' considerations'}</div>
+            <div style="font-size: 10px; color: #6c757d; margin-top: 4px;">${complexityDesc}</div>
         </div>
     `;
 
