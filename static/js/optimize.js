@@ -960,11 +960,29 @@ function createAvoidanceChart(result) {
  */
 function createElevationChart(result) {
     const ctx = document.getElementById('elevationChart');
-    if (!ctx) return;
+    if (!ctx) {
+        console.warn('Elevation chart canvas not found');
+        return;
+    }
     if (elevationChart) elevationChart.destroy();
 
     const re = result.route_elevation;
-    if (!re || !re.chart_elevations_m || !re.chart_elevations_m.length) return;
+    if (!re || !re.chart_elevations_m || !re.chart_elevations_m.length) {
+        console.warn('No elevation data available:', re);
+        // Show a message in the chart area
+        const chartContainer = ctx.parentElement;
+        if (chartContainer) {
+            chartContainer.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">Elevation data not available</p>';
+        }
+        return;
+    }
+    
+    // Validate elevation values - check for zeros or unrealistic values
+    const validElevations = re.chart_elevations_m.filter(e => e > 100 && e < 5000);
+    if (validElevations.length === 0) {
+        console.warn('Elevation values appear invalid:', re.chart_elevations_m);
+        return;
+    }
 
     const labels = re.chart_indices.map((i) => 'Pt ' + i);
 

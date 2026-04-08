@@ -252,27 +252,105 @@ data/
 
 ---
 
-## Project Structure (For Developers)
+## Project Files Explained (For Your Presentation)
+
+### **Main Application Files**
+
+| File | What It Does | Simple Explanation |
+|------|--------------|-------------------|
+| `run.py` | Starts the web server | Like turning on the engine of a car |
+| `config.py` | Settings and configuration | The "settings menu" for the app |
+| `requirements.txt` | List of Python packages needed | Shopping list for what to install |
+
+### **The "Brain" - Algorithm Files (`app/optimizer/`)**
+
+| File | What It Does | Real-World Analogy |
+|------|--------------|-------------------|
+| `cost_surface.py` | Creates a "cost map" showing what areas are expensive/difficult to build through | Like a weather map, but showing "danger zones" for construction |
+| `dijkstra.py` | Finds the cheapest path from A to B | Like Google Maps finding the fastest route |
+| `astar.py` | Faster version of Dijkstra | Like Google Maps with traffic prediction - smarter and faster |
+| `engineering_validation.py` | Checks if the route follows rules (tower spacing, slope limits) | Like a building inspector checking if construction meets code |
+
+### **The "Helper" Files (`app/services/`)**
+
+| File | What It Does | Simple Explanation |
+|------|--------------|-------------------|
+| `dem_loader.py` | Loads elevation data from multiple map tiles | Gets height information for the terrain |
+| `elevation_sampling.py` | Reads elevation at specific points | Like asking "how high is this exact spot?" |
+| `gis_data_loader.py` | Loads map data (roads, towns, rivers) | Opens the map files |
+| `uganda_gis_loader.py` | Special loader for Uganda data | Handles Uganda-specific map formats |
+
+### **The "Database" Files**
+
+| File | What It Does | Simple Explanation |
+|------|--------------|-------------------|
+| `app/models.py` | Defines database tables | Creates the "filing cabinet" structure |
+| `instance/transmission_routing.db` | The actual database file | Where all user accounts and routes are stored |
+
+### **The "Web Pages" (`templates/`)**
+
+| File | What It Shows | User Sees |
+|------|---------------|-----------|
+| `login.html` | Login page | Username/password boxes |
+| `register.html` | Registration page | Form to create new account |
+| `dashboard.html` | Main map interface | The big map with all the tools |
+
+### **The "Styling" (`static/`)**
+
+| File/Folder | What It Does | Simple Explanation |
+|-------------|--------------|-------------------|
+| `css/style.css` | Colors, fonts, layout | Makes everything look pretty |
+| `js/map.js` | Map controls and interactions | Handles clicking on the map |
+| `js/optimize.js` | Route optimization logic | Does the math when you click "Optimize" |
+| `js/layers.js` | Map layer switching | Handles changing map styles |
+| `images/` | Pictures and icons | Logo, background images |
+
+### **The "Data" (`data/`)**
+
+| Folder | Contains | Source |
+|--------|----------|--------|
+| `dem/` | Elevation data (SRTM) | USGS - NASA satellite data |
+| `roads/` | Road networks | OpenStreetMap |
+| `settlements/` | Towns and villages | OpenStreetMap |
+| `waterbodies/` | Rivers and lakes | OpenStreetMap |
+| `forests/` | Forest areas | OpenStreetMap |
+| `land_use/` | Farmland, urban areas | OpenStreetMap |
+
+### **How Files Work Together (Flow Diagram)**
 
 ```
-transmission_routing_tool/
-├── app/                      # Main application code
-│   ├── optimizer/            # Route finding algorithms
-│   │   ├── cost_surface.py   # Creates "cost map" (what to avoid)
-│   │   ├── dijkstra.py       # Dijkstra's route finder
-│   │   ├── astar.py          # A* route finder
-│   │   └── engineering_validation.py  # Checks if route is valid
-│   ├── services/             # Helper functions
-│   ├── models.py             # Database structure
-│   ├── routes_api.py         # API endpoints
-│   └── views.py              # Web pages
-├── templates/                # HTML pages
-├── static/                   # CSS, JavaScript, images
-├── data/                     # GIS data files
-├── config.py                 # Settings
-├── run.py                    # Start the app
-└── requirements.txt          # Python packages needed
+User clicks on map
+    ↓
+map.js → captures click coordinates
+    ↓
+optimize.js → sends to server
+    ↓
+routes_api.py → receives request
+    ↓
+cost_surface.py → creates "avoidance map"
+    ↓
+dijkstra.py OR astar.py → finds best path
+    ↓
+engineering_validation.py → checks if valid
+    ↓
+elevation_sampling.py → gets heights along route
+    ↓
+routes_api.py → sends results back
+    ↓
+optimize.js → displays route and charts
 ```
+
+### **Key Terms for Your Presentation**
+
+| Term | Simple Definition |
+|------|-------------------|
+| **DEM** | Digital Elevation Model - a map showing ground height |
+| **GIS** | Geographic Information System - digital mapping |
+| **AHP** | Analytic Hierarchy Process - method to combine multiple factors |
+| **Cost Surface** | A map where each pixel has a "cost" value (higher = avoid) |
+| **Waypoint** | A point the route must pass through |
+| **Corridor** | The area around the power line (60m wide) |
+| **Span** | Distance between two transmission towers |
 
 ---
 
