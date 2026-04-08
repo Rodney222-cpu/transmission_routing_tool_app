@@ -41,23 +41,23 @@ function initMap() {
     
     // GIS overlay layers (NOT added by default - user must select)
     const overlayLayers = {
-        "DEM / Topography": createDEMLayer(),
-        "Protected Areas": createProtectedAreasLayer(),
-        "Settlements": createSettlementsLayer(),
-        "Land Use": createLandUseLayer(),
-        "Roads": createRoadsLayer(),
-        "Water Bodies": createWaterBodiesLayer(),
-        "Forests": createForestsLayer(),
-        "Power Infrastructure": createPowerInfraLayer()
+        "🏔️ Elevation (DEM)": createDEMLayer(),
+        "🏘️ Settlements (Villages & Towns)": createSettlementsLayer(),
+        "🛣️ Roads & Highways": createRoadsLayer(),
+        "💧 Rivers & Lakes": createWaterBodiesLayer(),
+        "🌲 Forests & Vegetation": createForestsLayer(),
+        "🌾 Agricultural Land": createLandUseLayer(),
+        "🦁 Protected Areas (Wildlife)": createProtectedAreasLayer(),
+        "⚡ Power Lines & Substations": createPowerInfraLayer()
     };
 
     // Layer control with base maps and overlays
     const baseMaps = {
-        "Street Map": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
-        "Satellite": satellite
+        "🗺️ Street Map": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
+        "🛰️ Satellite": satellite
     };
 
-    L.control.layers(baseMaps, overlayLayers, {collapsed: false}).addTo(map);
+    L.control.layers(baseMaps, overlayLayers, {collapsed: true, position: 'topright'}).addTo(map);
     
     // Add scale
     L.control.scale({ imperial: false, metric: true }).addTo(map);

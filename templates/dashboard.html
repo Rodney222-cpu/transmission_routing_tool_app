@@ -242,68 +242,48 @@
             <main class="map-container">
                 <div id="map"></div>
                 
-                <!-- Map Controls -->
-                <div class="map-controls">
-                    <div class="control-group">
-                        <p class="help-text" style="margin-bottom: 8px; font-size: 12px; font-weight: 600;">🗺️ Basemap Layers (OpenStreetMap)</p>
-                        <p class="help-text" style="margin-bottom: 10px; font-size: 10px; opacity: 0.9; line-height: 1.4;">
-                            <strong>Tip:</strong> Select multiple layers to compare features! <br>
-                            Each layer shows different map details - combine them for best results on long routes.
-                        </p>
+                <!-- Map Controls - Compact Layer Panel -->
+                <div class="map-controls" style="max-height: 280px; overflow-y: auto;">
+                    <div class="control-group" style="padding: 10px;">
+                        <p class="help-text" style="margin-bottom: 6px; font-size: 11px; font-weight: 600;">🗺️ Map Styles</p>
                         
-                        <div class="layer-category" style="margin-bottom: 10px;">
-                            <p style="font-size: 10px; color: #666; margin: 0 0 5px 0; font-weight: 600;">GENERAL PURPOSE</p>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
-                                <input type="checkbox" id="showStandard" style="margin-right: 8px;">
-                                <span><strong>Standard</strong> - Default OSM view</span>
+                        <div class="layer-category" style="margin-bottom: 8px;">
+                            <p style="font-size: 9px; color: #666; margin: 0 0 3px 0; font-weight: 600;">BASIC MAPS</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 2px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showStandard" style="margin-right: 6px;">
+                                <span>📍 Standard Map</span>
                             </label>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
-                                <input type="checkbox" id="showHumanitarian" style="margin-right: 8px;">
-                                <span><strong>Humanitarian</strong> - HOT style (buildings/roads)</span>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 2px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showHumanitarian" style="margin-right: 6px;">
+                                <span>🏘️ Detailed (Buildings)</span>
                             </label>
                         </div>
                         
-                        <div class="layer-category" style="margin-bottom: 10px;">
-                            <p style="font-size: 10px; color: #666; margin: 0 0 5px 0; font-weight: 600;">CYCLING & TRANSPORT</p>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
-                                <input type="checkbox" id="showCyclOSM" style="margin-right: 8px;">
-                                <span><strong>CyclOSM</strong> - Bicycle-friendly routes</span>
+                        <div class="layer-category" style="margin-bottom: 8px;">
+                            <p style="font-size: 9px; color: #666; margin: 0 0 3px 0; font-weight: 600;">TRANSPORT</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 2px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showTransport" style="margin-right: 6px;">
+                                <span>🚌 Roads & Transit</span>
                             </label>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
-                                <input type="checkbox" id="showCycleMap" style="margin-right: 8px;">
-                                <span><strong>Cycle Map</strong> - Thunderforest cycling</span>
-                            </label>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
-                                <input type="checkbox" id="showTransport" style="margin-right: 8px;">
-                                <span><strong>Transport Map</strong> - Public transit view</span>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 2px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showCyclOSM" style="margin-right: 6px;">
+                                <span>🚴 Bicycle Routes</span>
                             </label>
                         </div>
                         
-                        <div class="layer-category" style="margin-bottom: 10px;">
-                            <p style="font-size: 10px; color: #666; margin: 0 0 5px 0; font-weight: 600;">TOPOGRAPHY & DETAILED</p>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
-                                <input type="checkbox" id="showTopo" style="margin-right: 8px;">
-                                <span><strong>Tracestrack Topo</strong> - Terrain/contours</span>
-                            </label>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
-                                <input type="checkbox" id="showShortbread" style="margin-right: 8px;">
-                                <span><strong>Shortbread</strong> - Clean simplified style</span>
+                        <div class="layer-category" style="margin-bottom: 8px;">
+                            <p style="font-size: 9px; color: #666; margin: 0 0 3px 0; font-weight: 600;">TERRAIN</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 2px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showTopo" style="margin-right: 6px;">
+                                <span>⛰️ Terrain & Hills</span>
                             </label>
                         </div>
                         
-                        <div class="layer-category" style="margin-bottom: 10px;">
-                            <p style="font-size: 10px; color: #666; margin: 0 0 5px 0; font-weight: 600;">PREMIUM (API Key Required)</p>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
-                                <input type="checkbox" id="showMapTiler" style="margin-right: 8px;">
-                                <span><strong>MapTiler OMT</strong> - Vector tiles (needs key)</span>
-                            </label>
-                        </div>
-                        
-                        <div id="activeLayersInfo" style="background: #e3f2fd; padding: 8px; border-radius: 4px; margin: 10px 0; font-size: 11px; display: none;">
+                        <div id="activeLayersInfo" style="background: #e3f2fd; padding: 4px 6px; border-radius: 3px; margin: 6px 0; font-size: 10px; display: none;">
                             <strong>Active:</strong> <span id="activeLayersList"></span>
                         </div>
                         
-                        <button id="clearLayers" style="margin-top: 8px; padding: 6px 12px; font-size: 11px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; width: 100%;">Clear All Layers</button>
+                        <button id="clearLayers" style="margin-top: 6px; padding: 4px 8px; font-size: 10px; background: #f44336; color: white; border: none; border-radius: 3px; cursor: pointer; width: 100%;">Clear All</button>
                     </div>
                 </div>
             </main>
