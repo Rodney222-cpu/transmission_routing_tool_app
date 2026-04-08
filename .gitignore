@@ -49,16 +49,22 @@ instance/
 .DS_Store
 Thumbs.db
 
-# Data files
-data/
-uploads/
-*.tif
-*.tiff
+# Data files - Original shapefiles (not needed, we have GeoJSON)
 *.shp
 *.shx
 *.dbf
 *.prj
-*.geojson
+*.cpg
+
+# Uploads folder
+uploads/
+
+# Generated cost surfaces (created at runtime)
+cost_surface_project_*.npy
+cost_surface_project_*.tif
+
+# Note: DEM .tif files and GeoJSON files are tracked by Git LFS
+# See .gitattributes for details
 
 # Logs
 *.log
