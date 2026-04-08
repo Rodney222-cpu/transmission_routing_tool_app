@@ -60,10 +60,10 @@ const tileLayerConfigs = {
         subdomains: 'abc'
     },
     tracestrack: {
-        name: 'Tracestrack Topo',
-        url: 'https://{s}.tile.tracestrack.com/topo__/{z}/{x}/{y}.png',
-        attribution: '&copy; <a href="https://www.tracestrack.com">Tracestrack</a> | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        maxZoom: 19,
+        name: 'OpenTopoMap',
+        url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+        attribution: '&copy; <a href="https://opentopomap.org">OpenTopoMap</a> | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 17,
         subdomains: 'abc'
     },
     shortbread: {
