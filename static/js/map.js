@@ -31,12 +31,7 @@ let currentWaypointId = null; // ID of waypoint being placed
 function initMap() {
     // Create map centered on Uganda (between Olwiyo and border)
     map = L.map('map').setView([3.4833, 32.3417], 10);
-    
-    // Add OpenStreetMap base layer
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors',
-        maxZoom: 18
-    }).addTo(map);
+    // Default basemap is added by static/js/layers.js (Standard OSM) so style matches sidebar toggles
     
     // Add satellite imagery option
     const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
@@ -288,10 +283,15 @@ function displayTowers(towerPositions) {
     // Clear existing towers
     towerMarkers.forEach(marker => map.removeLayer(marker));
     towerMarkers = [];
-    
+
     // Add tower markers
     towerPositions.forEach((pos, index) => {
-        const marker = L.circleMarker([pos[1], pos[0]], {
+        // pos can be [lon, lat] or [lon, lat, elevation]
+        const lon = pos[0];
+        const lat = pos[1];
+        const elevation = pos.length > 2 ? pos[2] : null;
+
+        const marker = L.circleMarker([lat, lon], {
             radius: 5,
             fillColor: '#0066CC',
             color: '#fff',
@@ -299,8 +299,13 @@ function displayTowers(towerPositions) {
             opacity: 1,
             fillOpacity: 0.8
         }).addTo(map);
-        
-        marker.bindPopup(`<b>Tower ${index + 1}</b><br>Lat: ${pos[1].toFixed(4)}<br>Lon: ${pos[0].toFixed(4)}`);
+
+        let popupContent = `<b>Tower ${index + 1}</b><br>Lat: ${lat.toFixed(4)}<br>Lon: ${lon.toFixed(4)}`;
+        if (elevation !== null && elevation !== undefined && !Number.isNaN(elevation)) {
+            popupContent += `<br>Elevation: ${Number(elevation).toFixed(1)} m`;
+        }
+
+        marker.bindPopup(popupContent);
         towerMarkers.push(marker);
     });
 }

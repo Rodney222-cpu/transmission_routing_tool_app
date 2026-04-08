@@ -63,3 +63,26 @@ uploads/
 # Logs
 *.log
 
+# Qoder/AI Assistant files
+.qoder/
+
+# Cache files
+app/__pycache__/
+app/*/__pycache__/
+app/*/*/__pycache__/
+*.cache
+
+# Temporary files
+*.tmp
+*.temp
+
+# Cost surface files (generated during runtime)
+cost_surface_project_*.npy
+cost_surface_project_*.tif
+
+# Large data files that should not be in git
+# Note: These are already excluded above but keeping for clarity
+# data/
+# *.tif
+# *.geojson
+

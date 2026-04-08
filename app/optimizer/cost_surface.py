@@ -25,40 +25,43 @@ class CostSurfaceGenerator:
     using AHP methodology and Uganda-specific constraints
     """
     
-    def __init__(self, config):
+    def __init__(self, config, resolution=30):
         """
         Initialize cost surface generator
-        
+
         Args:
             config: Flask app configuration object
+            resolution: Resolution in meters (default: 30m SRTM standard)
         """
         self.config = config
-        self.resolution = 30  # 30m resolution (SRTM standard)
-        
-    def generate_composite_cost_surface(self, bounds, ahp_weights, layers_data):
+        self.resolution = resolution
+
+    def generate_composite_cost_surface(self, bounds, ahp_weights, layers_data, resolution=None, grid_shape=None):
         """
         Generate composite cost surface using AHP weights
-        
+
         Args:
             bounds: [min_lon, min_lat, max_lon, max_lat]
             ahp_weights: Dictionary of weights for each criterion
             layers_data: Dictionary containing paths or arrays for each layer
-                {
-                    'dem': path_or_array,
-                    'land_use': path_or_array,
-                    'settlements': path_or_array,
-                    'protected_areas': path_or_array,
-                    'roads': path_or_array
-                }
-        
+            resolution: Optional custom resolution in meters (overrides self.resolution)
+            grid_shape: Optional (height, width) to match preloaded layer rasters exactly
+                (avoids duplicate dimension math and large float64 temporaries)
+
         Returns:
             numpy.ndarray: Composite cost surface
             dict: Metadata about the cost surface
         """
-        # Calculate dimensions
+        # Use custom resolution if provided, otherwise use instance resolution
+        res = resolution if resolution is not None else self.resolution
+        self.resolution = res
+
         min_lon, min_lat, max_lon, max_lat = bounds
-        width = int((max_lon - min_lon) * 111320 / self.resolution)  # Approximate meters
-        height = int((max_lat - min_lat) * 111320 / self.resolution)
+        if grid_shape is not None:
+            height, width = int(grid_shape[0]), int(grid_shape[1])
+        else:
+            width = int((max_lon - min_lon) * 111320 / res)
+            height = int((max_lat - min_lat) * 111320 / res)
         
         # Initialize composite cost surface
         composite_cost = np.zeros((height, width), dtype=np.float32)
@@ -111,7 +114,7 @@ class CostSurfaceGenerator:
         
         metadata = {
             'bounds': bounds,
-            'resolution': self.resolution,
+            'resolution': res,
             'shape': composite_cost.shape,
             'weights': ahp_weights,
             'min_cost': float(np.min(composite_cost)),
@@ -143,13 +146,14 @@ class CostSurfaceGenerator:
         # Resize to target shape if needed
         if dem.shape != shape:
             dem = self._resize_array(dem, shape)
-        
-        # Calculate slope in degrees
+
+        dem = np.asarray(dem, dtype=np.float32)
+        # Calculate slope in degrees (keep float32 to avoid large float64 allocations)
         dy, dx = np.gradient(dem)
-        slope = np.degrees(np.arctan(np.sqrt(dx**2 + dy**2)))
-        
+        slope = np.degrees(np.arctan(np.sqrt(dx.astype(np.float32) ** 2 + dy.astype(np.float32) ** 2))).astype(np.float32)
+
         # Apply slope-based costs (Uganda-specific)
-        cost = np.ones_like(slope)
+        cost = np.ones_like(slope, dtype=np.float32)
         slope_costs = self.config.get('SLOPE_COSTS', {
             'flat': 1.0, 'gentle': 1.5, 'moderate': 2.5, 'steep': 5.0, 'very_steep': 100.0
         })
@@ -226,8 +230,8 @@ class CostSurfaceGenerator:
             settlements = self._resize_array(settlements, shape)
 
         # Calculate distance transform (distance to nearest settlement in pixels)
-        distance_pixels = distance_transform_edt(settlements == 0)
-        distance_meters = distance_pixels * self.resolution
+        distance_pixels = distance_transform_edt(settlements == 0).astype(np.float32)
+        distance_meters = distance_pixels * float(self.resolution)
 
         # Apply distance-based costs
         cost = np.ones_like(distance_meters, dtype=np.float32)
@@ -293,8 +297,8 @@ class CostSurfaceGenerator:
             roads = self._resize_array(roads, shape)
 
         # Calculate distance to roads
-        distance_pixels = distance_transform_edt(roads == 0)
-        distance_meters = distance_pixels * self.resolution
+        distance_pixels = distance_transform_edt(roads == 0).astype(np.float32)
+        distance_meters = distance_pixels * float(self.resolution)
 
         # Lower cost near roads (easier construction access)
         cost = np.ones_like(distance_meters, dtype=np.float32)
@@ -319,7 +323,8 @@ class CostSurfaceGenerator:
 
         zoom_factors = (target_shape[0] / array.shape[0],
                        target_shape[1] / array.shape[1])
-        return zoom(array, zoom_factors, order=1)
+        out = zoom(np.asarray(array, dtype=np.float32), zoom_factors, order=1)
+        return np.asarray(out, dtype=np.float32)
 
     def _normalize_cost_surface(self, cost_surface):
         """
@@ -335,11 +340,11 @@ class CostSurfaceGenerator:
         max_val = np.max(cost_surface)
 
         if max_val > min_val:
-            normalized = ((cost_surface - min_val) / (max_val - min_val)) * 100
+            normalized = ((cost_surface - min_val) / (max_val - min_val)) * 100.0
         else:
-            normalized = np.zeros_like(cost_surface)
+            normalized = np.zeros_like(cost_surface, dtype=np.float32)
 
-        return normalized
+        return normalized.astype(np.float32, copy=False)
 
     def save_cost_surface(self, cost_surface, output_path, bounds, crs='EPSG:4326'):
         """

@@ -7,7 +7,17 @@
     
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    
+
+    <!-- MapTiler / Thunderforest keys from server config (.env MAPTILER_API_KEY, THUNDERFOREST_API_KEY) -->
+    <script>
+        window.MAP_KEYS = window.MAP_KEYS || {};
+        window.MAP_KEYS.maptiler = {{ maptiler_key|tojson }};
+        window.MAP_KEYS.thunderforest = {{ thunderforest_key|tojson }};
+    </script>
+
+    <!-- Chart.js for graphical analysis -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
     <!-- Custom CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
@@ -191,15 +201,40 @@
                 </div>
                 
                 <div class="sidebar-section" id="resultsSection" style="display: none;">
-                    <h3>Results</h3>
+                    <h3>📊 Route Analysis</h3>
                     <div id="routeMetrics"></div>
 
-                    <h4 style="margin-top: 20px;">Cost Breakdown</h4>
+                    <!-- Graphical Analysis Charts -->
+                    <div style="margin-top: 20px;">
+                        <h4>Cost Distribution</h4>
+                        <canvas id="costChart" style="max-height: 200px;"></canvas>
+                    </div>
+
+                    <div style="margin-top: 20px;">
+                        <h4>Route Quality Metrics</h4>
+                        <canvas id="qualityChart" style="max-height: 180px;"></canvas>
+                    </div>
+
+                    <div style="margin-top: 20px;">
+                        <h4>Route optimality (features avoided)</h4>
+                        <p class="help-text" style="font-size:11px;">Higher % = more of the route stays off costly map cells (settlements, protected land, water, built-up).</p>
+                        <canvas id="avoidanceChart" style="max-height: 220px;"></canvas>
+                    </div>
+
+                    <div style="margin-top: 20px;">
+                        <h4>Elevation along route (m)</h4>
+                        <p class="help-text" style="font-size:11px;">Sampled from DEM when available; otherwise a regional estimate.</p>
+                        <canvas id="elevationChart" style="max-height: 180px;"></canvas>
+                    </div>
+
+                    <h4 style="margin-top: 20px;">Detailed Cost Breakdown</h4>
                     <div id="costBreakdown" class="cost-breakdown"></div>
 
-                    <button id="exportBtn" class="btn btn-secondary">Export GeoJSON</button>
-                    <button id="exportXyzBtn" class="btn btn-secondary">Export XYZ (E/N/Elev)</button>
-                    <button id="viewCorridorBtn" class="btn btn-secondary">View Corridor</button>
+                    <div style="margin-top: 15px;">
+                        <button id="exportBtn" class="btn btn-secondary">Export GeoJSON</button>
+                        <button id="exportXyzBtn" class="btn btn-secondary">Export XYZ (E/N/Elev)</button>
+                        <button id="viewCorridorBtn" class="btn btn-secondary">View Corridor</button>
+                    </div>
                 </div>
             </aside>
             
@@ -210,22 +245,65 @@
                 <!-- Map Controls -->
                 <div class="map-controls">
                     <div class="control-group">
-                        <p class="help-text" style="margin-bottom: 8px; font-size: 11px;">Select layers to display (none preset)</p>
-                        <label>
-                            <input type="checkbox" id="showDEM"> DEM/Topography
-                        </label>
-                        <label>
-                            <input type="checkbox" id="showLandUse"> Land Use
-                        </label>
-                        <label>
-                            <input type="checkbox" id="showSettlements"> Settlements
-                        </label>
-                        <label>
-                            <input type="checkbox" id="showProtected"> Protected Areas
-                        </label>
-                        <label>
-                            <input type="checkbox" id="showRoads"> Roads
-                        </label>
+                        <p class="help-text" style="margin-bottom: 8px; font-size: 12px; font-weight: 600;">🗺️ Basemap Layers (OpenStreetMap)</p>
+                        <p class="help-text" style="margin-bottom: 10px; font-size: 10px; opacity: 0.9; line-height: 1.4;">
+                            <strong>Tip:</strong> Select multiple layers to compare features! <br>
+                            Each layer shows different map details - combine them for best results on long routes.
+                        </p>
+                        
+                        <div class="layer-category" style="margin-bottom: 10px;">
+                            <p style="font-size: 10px; color: #666; margin: 0 0 5px 0; font-weight: 600;">GENERAL PURPOSE</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
+                                <input type="checkbox" id="showStandard" style="margin-right: 8px;">
+                                <span><strong>Standard</strong> - Default OSM view</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
+                                <input type="checkbox" id="showHumanitarian" style="margin-right: 8px;">
+                                <span><strong>Humanitarian</strong> - HOT style (buildings/roads)</span>
+                            </label>
+                        </div>
+                        
+                        <div class="layer-category" style="margin-bottom: 10px;">
+                            <p style="font-size: 10px; color: #666; margin: 0 0 5px 0; font-weight: 600;">CYCLING & TRANSPORT</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
+                                <input type="checkbox" id="showCyclOSM" style="margin-right: 8px;">
+                                <span><strong>CyclOSM</strong> - Bicycle-friendly routes</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
+                                <input type="checkbox" id="showCycleMap" style="margin-right: 8px;">
+                                <span><strong>Cycle Map</strong> - Thunderforest cycling</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
+                                <input type="checkbox" id="showTransport" style="margin-right: 8px;">
+                                <span><strong>Transport Map</strong> - Public transit view</span>
+                            </label>
+                        </div>
+                        
+                        <div class="layer-category" style="margin-bottom: 10px;">
+                            <p style="font-size: 10px; color: #666; margin: 0 0 5px 0; font-weight: 600;">TOPOGRAPHY & DETAILED</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
+                                <input type="checkbox" id="showTopo" style="margin-right: 8px;">
+                                <span><strong>Tracestrack Topo</strong> - Terrain/contours</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
+                                <input type="checkbox" id="showShortbread" style="margin-right: 8px;">
+                                <span><strong>Shortbread</strong> - Clean simplified style</span>
+                            </label>
+                        </div>
+                        
+                        <div class="layer-category" style="margin-bottom: 10px;">
+                            <p style="font-size: 10px; color: #666; margin: 0 0 5px 0; font-weight: 600;">PREMIUM (API Key Required)</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 4px 0; cursor: pointer;">
+                                <input type="checkbox" id="showMapTiler" style="margin-right: 8px;">
+                                <span><strong>MapTiler OMT</strong> - Vector tiles (needs key)</span>
+                            </label>
+                        </div>
+                        
+                        <div id="activeLayersInfo" style="background: #e3f2fd; padding: 8px; border-radius: 4px; margin: 10px 0; font-size: 11px; display: none;">
+                            <strong>Active:</strong> <span id="activeLayersList"></span>
+                        </div>
+                        
+                        <button id="clearLayers" style="margin-top: 8px; padding: 6px 12px; font-size: 11px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; width: 100%;">Clear All Layers</button>
                     </div>
                 </div>
             </main>

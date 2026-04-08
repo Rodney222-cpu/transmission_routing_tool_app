@@ -32,6 +32,10 @@ class Config:
     MAX_CONTENT_LENGTH = 500 * 1024 * 1024  # 500MB max file size
     ALLOWED_EXTENSIONS = {'tif', 'tiff', 'shp', 'geojson', 'json'}
     
+    # Map basemap API keys (optional — set in .env, never commit real keys)
+    MAPTILER_API_KEY = os.environ.get('MAPTILER_API_KEY', '')
+    THUNDERFOREST_API_KEY = os.environ.get('THUNDERFOREST_API_KEY', '')
+
     # GIS Data paths
     DATA_FOLDER = os.path.join(basedir, 'data')
     DEM_FOLDER = os.path.join(DATA_FOLDER, 'dem')

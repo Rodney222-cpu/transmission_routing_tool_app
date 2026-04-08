@@ -18,6 +18,12 @@ from typing import Dict, Optional, Tuple, Any, List
 
 import numpy as np
 
+# Import multi-tile DEM loader
+try:
+    from app.services.dem_loader import MultiTileDEMLoader
+    HAS_DEM_LOADER = True
+except ImportError:
+    HAS_DEM_LOADER = False
 
 try:
     import rasterio
@@ -128,11 +134,25 @@ def load_layers_for_bounds(
     """
     layers: Dict[str, Any] = {}
 
-    dem_path = _first_existing_file(getattr(config, "DEM_FOLDER", ""), (".tif", ".tiff"))
-    if dem_path:
-        dem = _read_raster_to_bounds(dem_path, bounds_wgs84, out_shape)
-        if dem is not None:
-            layers["dem"] = dem.array
+    # Try multi-tile DEM loader first (for large areas with multiple tiles)
+    dem_folder = getattr(config, "DEM_FOLDER", "")
+    if HAS_DEM_LOADER and dem_folder and os.path.isdir(dem_folder):
+        try:
+            dem_loader = MultiTileDEMLoader(dem_folder)
+            dem_array = dem_loader.load_dem_for_bounds(bounds_wgs84, out_shape)
+            if dem_array is not None:
+                layers["dem"] = dem_array
+                print(f"✓ Loaded DEM using multi-tile loader: {dem_array.shape}")
+        except Exception as e:
+            print(f"Multi-tile DEM loader failed: {e}, falling back to single file")
+    
+    # Fallback to single file DEM loading
+    if "dem" not in layers:
+        dem_path = _first_existing_file(dem_folder, (".tif", ".tiff"))
+        if dem_path:
+            dem = _read_raster_to_bounds(dem_path, bounds_wgs84, out_shape)
+            if dem is not None:
+                layers["dem"] = dem.array
 
     land_path = _first_existing_file(getattr(config, "LANDCOVER_FOLDER", ""), (".tif", ".tiff"))
     if land_path and land_path.lower().endswith((".tif", ".tiff")):

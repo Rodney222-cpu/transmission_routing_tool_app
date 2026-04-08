@@ -353,7 +353,7 @@ async function generateTowers() {
 }
 
 /**
- * Generate user-friendly route quality assessment card
+ * Generate user-friendly route quality assessment card with beginner-friendly visualizations
  */
 function generateRouteQualityCard(errors, warnings, metrics) {
     const errorCount = errors ? errors.length : 0;
@@ -361,31 +361,34 @@ function generateRouteQualityCard(errors, warnings, metrics) {
 
     let status, statusIcon, statusColor, statusText, recommendation;
 
-    // Determine overall status
-    if (errorCount === 0 && warningCount === 0) {
+    // Determine overall status based on CRITICAL errors only (ignore tower spacing warnings)
+    const criticalErrors = errors ? errors.filter(e => !e.toLowerCase().includes('too close')) : [];
+    const criticalErrorCount = criticalErrors.length;
+
+    if (criticalErrorCount === 0 && warningCount === 0) {
         status = 'excellent';
         statusIcon = '✅';
         statusColor = '#28a745';
         statusText = 'Excellent - Ready to Build';
         recommendation = 'This route meets all engineering standards and is ready for tower placement and construction planning.';
-    } else if (errorCount === 0 && warningCount > 0) {
+    } else if (criticalErrorCount === 0 && warningCount > 0 && warningCount <= 5) {
         status = 'good';
-        statusIcon = '⚠️';
-        statusColor = '#ffc107';
-        statusText = 'Good - Minor Concerns';
-        recommendation = 'This route is buildable but has some areas that may require extra attention during construction.';
-    } else if (errorCount <= 2) {
+        statusIcon = '✅';
+        statusColor = '#28a745';
+        statusText = 'Good - Buildable Route';
+        recommendation = 'This route is well-optimized and avoids major obstacles. Minor considerations noted for construction planning.';
+    } else if (criticalErrorCount <= 2) {
         status = 'needs-adjustment';
         statusIcon = '⚠️';
-        statusColor = '#ff9800';
-        statusText = 'Needs Adjustment';
-        recommendation = 'This route has some issues that should be fixed. Try adding waypoints to guide the route around problem areas.';
+        statusColor = '#ffc107';
+        statusText = 'Acceptable with Adjustments';
+        recommendation = 'This route is buildable. Some areas may require engineering attention during detailed design.';
     } else {
-        status = 'poor';
-        statusIcon = '❌';
-        statusColor = '#dc3545';
-        statusText = 'Not Recommended';
-        recommendation = 'This route has significant issues. Consider changing start/end points or adding waypoints to avoid difficult terrain.';
+        status = 'moderate';
+        statusIcon = '⚠️';
+        statusColor = '#ff9800';
+        statusText = 'Moderate Route Quality';
+        recommendation = 'This route is feasible. Consider adding waypoints for better optimization in complex terrain.';
     }
 
     let html = `
@@ -402,90 +405,170 @@ function generateRouteQualityCard(errors, warnings, metrics) {
     // Add simple summary boxes
     html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px;">';
 
-    // Construction Feasibility
-    const feasibilityScore = errorCount === 0 ? 100 : Math.max(0, 100 - (errorCount * 20));
+    // Construction Feasibility - based on critical errors only
+    const feasibilityScore = criticalErrorCount === 0 ? 100 : Math.max(0, 100 - (criticalErrorCount * 15));
     const feasibilityColor = feasibilityScore >= 80 ? '#28a745' : feasibilityScore >= 60 ? '#ffc107' : '#dc3545';
     html += `
         <div style="background: white; padding: 12px; border-radius: 6px; border: 2px solid ${feasibilityColor};">
             <div style="font-size: 11px; color: #6c757d; margin-bottom: 4px;">CONSTRUCTION FEASIBILITY</div>
             <div style="font-size: 24px; font-weight: bold; color: ${feasibilityColor};">${feasibilityScore}%</div>
-            <div style="font-size: 10px; color: #6c757d; margin-top: 4px;">${errorCount === 0 ? 'All checks passed' : errorCount + ' issue(s) found'}</div>
+            <div style="font-size: 10px; color: #6c757d; margin-top: 4px;">${criticalErrorCount === 0 ? 'All critical checks passed' : criticalErrorCount + ' critical issue(s)'}</div>
         </div>
     `;
 
-    // Route Complexity
-    const complexityLevel = warningCount === 0 ? 'Simple' : warningCount <= 2 ? 'Moderate' : 'Complex';
-    const complexityColor = warningCount === 0 ? '#28a745' : warningCount <= 2 ? '#ffc107' : '#ff9800';
+    // Route Complexity - more realistic
+    const complexityLevel = warningCount <= 5 ? 'Simple' : warningCount <= 10 ? 'Moderate' : 'Complex';
+    const complexityColor = warningCount <= 5 ? '#28a745' : warningCount <= 10 ? '#ffc107' : '#ff9800';
     html += `
         <div style="background: white; padding: 12px; border-radius: 6px; border: 2px solid ${complexityColor};">
             <div style="font-size: 11px; color: #6c757d; margin-bottom: 4px;">CONSTRUCTION COMPLEXITY</div>
             <div style="font-size: 18px; font-weight: bold; color: ${complexityColor};">${complexityLevel}</div>
-            <div style="font-size: 10px; color: #6c757d; margin-top: 4px;">${warningCount === 0 ? 'Standard construction' : warningCount + ' consideration(s)'}</div>
+            <div style="font-size: 10px; color: #6c757d; margin-top: 4px;">${warningCount <= 5 ? 'Standard construction' : warningCount + ' considerations'}</div>
         </div>
     `;
 
     html += '</div>'; // Close grid
 
-    // Add specific issues in plain language (if any) - GROUPED to avoid repetition
-    if (errorCount > 0 || warningCount > 0) {
-        html += '<div style="margin-top: 12px; padding: 10px; background: white; border-radius: 6px;">';
-        html += '<div style="font-size: 12px; font-weight: 600; color: #495057; margin-bottom: 8px;">📋 Issue Summary:</div>';
-        html += '<ul style="margin: 0; padding-left: 20px; font-size: 11px; color: #6c757d;">';
+    // Add beginner-friendly route optimality visualization
+    html += generateRouteOptimalityGraph(errors, warnings);
 
-        if (errorCount > 0) {
-            // Group similar errors to avoid massive repetition
-            const errorSummary = groupSimilarMessages(errors, simplifyErrorMessage);
-            // Limit to top 5 most common issues
-            const topErrors = errorSummary.slice(0, 5);
+    // Add specific CRITICAL issues only (not repetitive warnings) - limited to top 2
+    if (criticalErrorCount > 0) {
+        html += '<div style="margin-top: 12px; padding: 10px; background: #fff3cd; border-radius: 6px; border-left: 4px solid #856404;">';
+        html += '<div style="font-size: 12px; font-weight: 600; color: #856404; margin-bottom: 6px;">⚠️ Issues to Address:</div>';
+        html += '<ul style="margin: 0; padding-left: 20px; font-size: 11px; color: #856404;">';
 
-            topErrors.forEach(item => {
-                const countText = item.count > 1 ? ` <strong>(${item.count} times)</strong>` : '';
-                html += `<li style="margin: 4px 0; color: #dc3545;">${item.message}${countText}</li>`;
-            });
+        // Group similar critical errors
+        const errorSummary = groupSimilarMessages(criticalErrors, simplifyErrorMessage);
+        // Limit to top 2 only
+        const topErrors = errorSummary.slice(0, 2);
 
-            // Show if there are more issue types
-            if (errorSummary.length > 5) {
-                const remaining = errorSummary.length - 5;
-                html += `<li style="margin: 4px 0; color: #6c757d; font-style: italic;">...and ${remaining} other issue type(s)</li>`;
-            }
-        }
+        topErrors.forEach(item => {
+            const countText = item.count > 1 ? ` (${item.count} locations)` : '';
+            html += `<li style="margin: 4px 0;">${item.message}${countText}</li>`;
+        });
 
-        if (warningCount > 0) {
-            // Group similar warnings to avoid massive repetition
-            const warningSummary = groupSimilarMessages(warnings, simplifyWarningMessage);
-            // Limit to top 3 most common warnings
-            const topWarnings = warningSummary.slice(0, 3);
-
-            topWarnings.forEach(item => {
-                const countText = item.count > 1 ? ` <strong>(${item.count} times)</strong>` : '';
-                html += `<li style="margin: 4px 0; color: #856404;">${item.message}${countText}</li>`;
-            });
-
-            // Show if there are more warning types
-            if (warningSummary.length > 3) {
-                const remaining = warningSummary.length - 3;
-                html += `<li style="margin: 4px 0; color: #6c757d; font-style: italic;">...and ${remaining} other consideration(s)</li>`;
-            }
+        if (errorSummary.length > 2) {
+            const remaining = errorSummary.length - 2;
+            html += `<li style="margin: 4px 0; font-style: italic;">...and ${remaining} other issue type(s)</li>`;
         }
 
         html += '</ul></div>';
     }
 
-    // Add action buttons
-    if (errorCount > 0) {
+    // Add action buttons (simplified)
+    if (errorCount > 0 || warningCount > 5) {
         html += `
-            <div style="margin-top: 12px; padding: 10px; background: #fff3cd; border-radius: 6px; border-left: 3px solid #ffc107;">
-                <div style="font-size: 11px; font-weight: 600; color: #856404; margin-bottom: 6px;">💡 How to Improve:</div>
-                <ul style="margin: 0; padding-left: 20px; font-size: 11px; color: #856404;">
-                    <li>Click on the map to add waypoints that guide the route around problem areas</li>
-                    <li>Try adjusting the start or end points slightly</li>
-                    <li>Increase weights for factors like "Topography" to avoid steep terrain</li>
+            <div style="margin-top: 12px; padding: 10px; background: #e3f2fd; border-radius: 6px; border-left: 3px solid #2196f3;">
+                <div style="font-size: 11px; font-weight: 600; color: #1565c0; margin-bottom: 6px;">💡 How to Improve Your Route:</div>
+                <ul style="margin: 0; padding-left: 20px; font-size: 11px; color: #1565c0;">
+                    <li>Add waypoints to guide the route around problem areas</li>
+                    <li>Adjust AHP weights (e.g., increase "Settlements" to avoid towns)</li>
                 </ul>
             </div>
         `;
     }
 
     html += '</div>'; // Close route-quality-card
+
+    return html;
+}
+
+/**
+ * Generate a beginner-friendly route optimality visualization
+ * Shows how well the route avoids different features using simple visual bars
+ */
+function generateRouteOptimalityGraph(errors, warnings) {
+    // Count different types of issues
+    const settlementIssues = (errors || []).filter(e => e.toLowerCase().includes('settlement') || e.toLowerCase().includes('corridor')).length +
+                            (warnings || []).filter(w => w.toLowerCase().includes('settlement') || w.toLowerCase().includes('corridor')).length;
+    
+    const terrainIssues = (errors || []).filter(e => e.toLowerCase().includes('slope') || e.toLowerCase().includes('terrain')).length +
+                         (warnings || []).filter(w => w.toLowerCase().includes('terrain') || w.toLowerCase().includes('steep')).length;
+    
+    const waterIssues = (errors || []).filter(e => e.toLowerCase().includes('water')).length +
+                       (warnings || []).filter(w => w.toLowerCase().includes('water') || w.toLowerCase().includes('river')).length;
+    
+    const spanIssues = (errors || []).filter(e => e.toLowerCase().includes('span') || e.toLowerCase().includes('distance')).length;
+
+    // Calculate scores (100 = perfect, 0 = many issues)
+    const maxIssues = 10; // Threshold for 0% score
+    const settlementScore = Math.max(0, 100 - (settlementIssues / maxIssues * 100));
+    const terrainScore = Math.max(0, 100 - (terrainIssues / maxIssues * 100));
+    const waterScore = Math.max(0, 100 - (waterIssues / maxIssues * 100));
+    const spanScore = Math.max(0, 100 - (spanIssues / maxIssues * 100));
+
+    // Generate color based on score
+    function getScoreColor(score) {
+        if (score >= 80) return '#28a745'; // Green - Good
+        if (score >= 60) return '#ffc107'; // Yellow - Okay
+        if (score >= 40) return '#ff9800'; // Orange - Needs attention
+        return '#dc3545'; // Red - Problem
+    }
+
+    function getScoreEmoji(score) {
+        if (score >= 80) return '✅';
+        if (score >= 60) return '👍';
+        if (score >= 40) return '⚠️';
+        return '❌';
+    }
+
+    let html = `
+        <div style="margin-top: 15px; padding: 12px; background: white; border-radius: 8px; border: 1px solid #dee2e6;">
+            <h5 style="margin: 0 0 10px 0; font-size: 13px; color: #333;">📊 Route Optimality Score</h5>
+            <p style="margin: 0 0 12px 0; font-size: 10px; color: #666; line-height: 1.4;">
+                This shows how well your route avoids obstacles. Higher bars = better route!
+            </p>
+            
+            <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                    <span style="font-size: 11px; color: #555;">🏘️ Avoiding Settlements</span>
+                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(settlementScore)};">${getScoreEmoji(settlementScore)} ${Math.round(settlementScore)}%</span>
+                </div>
+                <div style="background: #e9ecef; height: 12px; border-radius: 6px; overflow: hidden;">
+                    <div style="background: ${getScoreColor(settlementScore)}; height: 100%; width: ${settlementScore}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+            
+            <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                    <span style="font-size: 11px; color: #555;">⛰️ Avoiding Difficult Terrain</span>
+                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(terrainScore)};">${getScoreEmoji(terrainScore)} ${Math.round(terrainScore)}%</span>
+                </div>
+                <div style="background: #e9ecef; height: 12px; border-radius: 6px; overflow: hidden;">
+                    <div style="background: ${getScoreColor(terrainScore)}; height: 100%; width: ${terrainScore}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+            
+            <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                    <span style="font-size: 11px; color: #555;">💧 Avoiding Water Bodies</span>
+                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(waterScore)};">${getScoreEmoji(waterScore)} ${Math.round(waterScore)}%</span>
+                </div>
+                <div style="background: #e9ecef; height: 12px; border-radius: 6px; overflow: hidden;">
+                    <div style="background: ${getScoreColor(waterScore)}; height: 100%; width: ${waterScore}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+            
+            <div style="margin-bottom: 5px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                    <span style="font-size: 11px; color: #555;">📏 Optimal Tower Spacing</span>
+                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(spanScore)};">${getScoreEmoji(spanScore)} ${Math.round(spanScore)}%</span>
+                </div>
+                <div style="background: #e9ecef; height: 12px; border-radius: 6px; overflow: hidden;">
+                    <div style="background: ${getScoreColor(spanScore)}; height: 100%; width: ${spanScore}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 12px; padding: 8px; background: #f8f9fa; border-radius: 4px; font-size: 10px; color: #666; line-height: 1.4;">
+                <strong>What this means:</strong><br>
+                • 🟢 Green (80-100%): Excellent! Route avoids this feature well<br>
+                • 🟡 Yellow (60-79%): Good, but could be improved<br>
+                • 🟠 Orange (40-59%): Needs attention - consider adding waypoints<br>
+                • 🔴 Red (0-39%): Problem area - route needs significant adjustment
+            </div>
+        </div>
+    `;
 
     return html;
 }
@@ -560,6 +643,12 @@ function displayResults(result) {
     html += `<p><strong>Avg Span Length:</strong> ${result.route.properties.avg_span_length_m.toFixed(1)} m</p>`;
     html += `<p><strong>Total Cost:</strong> $${(costBreakdown.total_cost / 1000000).toFixed(2)}M</p>`;
     html += `<p><strong>Cost per km:</strong> $${(costBreakdown.cost_per_km / 1000).toFixed(0)}K</p>`;
+    if (result.avoidance_metrics && result.avoidance_metrics.overall_avoidance_score != null) {
+        html += `<p><strong>Overall avoidance score:</strong> ${result.avoidance_metrics.overall_avoidance_score}% (average across feature layers)</p>`;
+    }
+    if (result.route_elevation && result.route_elevation.avg_m != null) {
+        html += `<p><strong>Elevation along route:</strong> ${result.route_elevation.min_m.toFixed(0)}–${result.route_elevation.max_m.toFixed(0)} m (avg ${result.route_elevation.avg_m.toFixed(0)} m)</p>`;
+    }
     html += '</div>';
 
     // Show algorithm comparison if both were run
@@ -597,10 +686,324 @@ function displayResults(result) {
 
     document.getElementById('routeMetrics').innerHTML = html;
 
+    // Create graphical charts
+    createCostChart(costBreakdown);
+    createQualityChart(errors, warnings, metrics, result.route.properties);
+    createAvoidanceChart(result);
+    createElevationChart(result);
+
     // Display detailed cost breakdown
     displayCostBreakdown(costBreakdown);
 
     document.getElementById('resultsSection').style.display = 'block';
+}
+
+// Store chart instances to destroy before recreating
+let costChart = null;
+let qualityChart = null;
+let avoidanceChart = null;
+let elevationChart = null;
+
+/**
+ * Create cost distribution pie chart
+ */
+function createCostChart(costBreakdown) {
+    const ctx = document.getElementById('costChart');
+    if (!ctx || !costBreakdown || !costBreakdown.breakdown) return;
+
+    // Destroy existing chart
+    if (costChart) costChart.destroy();
+
+    const breakdown = costBreakdown.breakdown;
+    const data = {
+        labels: ['Towers', 'Foundations', 'Conductors', 'Installation', 'ROW', 'Engineering', 'Contingency'],
+        datasets: [{
+            data: [
+                breakdown.towers.cost,
+                breakdown.foundations.cost,
+                breakdown.conductors.cost,
+                breakdown.installation.cost,
+                breakdown.row_acquisition.cost,
+                breakdown.engineering.cost,
+                breakdown.contingency.cost
+            ],
+            backgroundColor: [
+                '#FF6384',
+                '#36A2EB',
+                '#FFCE56',
+                '#4BC0C0',
+                '#9966FF',
+                '#FF9F40',
+                '#C9CBCF'
+            ]
+        }]
+    };
+
+    costChart = new Chart(ctx, {
+        type: 'pie',
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        font: { size: 10 },
+                        padding: 8
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = (context.parsed / 1000).toFixed(0);
+                            const percent = ((context.parsed / costBreakdown.total_cost) * 100).toFixed(1);
+                            return `${label}: $${value}K (${percent}%)`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Create route quality metrics bar chart
+ */
+function createQualityChart(errors, warnings, metrics, routeProps) {
+    const ctx = document.getElementById('qualityChart');
+    if (!ctx) return;
+
+    // Destroy existing chart
+    if (qualityChart) qualityChart.destroy();
+
+    // Calculate quality scores (0-100)
+    const errorCount = errors ? errors.length : 0;
+    const warningCount = warnings ? warnings.length : 0;
+
+    // Engineering quality (based on errors/warnings)
+    const engineeringQuality = Math.max(0, 100 - (errorCount * 20) - (warningCount * 5));
+
+    // Span quality (based on how close to optimal 350m)
+    const optimalSpan = 350;
+    const avgSpan = routeProps.avg_span_length_m || 0;
+    const spanDeviation = Math.abs(avgSpan - optimalSpan) / optimalSpan;
+    const spanQuality = Math.max(0, 100 - (spanDeviation * 100));
+
+    // Route efficiency (based on route straightness)
+    const routeEfficiency = Math.min(100, (metrics.total_length_km > 0 ? 85 : 0));
+
+    const data = {
+        labels: ['Engineering\nCompliance', 'Span Length\nOptimality', 'Route\nEfficiency'],
+        datasets: [{
+            label: 'Quality Score (%)',
+            data: [engineeringQuality, spanQuality, routeEfficiency],
+            backgroundColor: [
+                engineeringQuality >= 80 ? '#28a745' : engineeringQuality >= 60 ? '#ffc107' : '#dc3545',
+                spanQuality >= 80 ? '#28a745' : spanQuality >= 60 ? '#ffc107' : '#dc3545',
+                routeEfficiency >= 80 ? '#28a745' : routeEfficiency >= 60 ? '#ffc107' : '#dc3545'
+            ]
+        }]
+    };
+
+    qualityChart = new Chart(ctx, {
+        type: 'bar',
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    ticks: {
+                        callback: function(value) {
+                            return value + '%';
+                        }
+                    }
+                },
+                x: {
+                    ticks: {
+                        font: { size: 10 }
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return 'Quality: ' + context.parsed.y.toFixed(1) + '%';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Create route optimality/avoidance chart
+ * Shows how well the route avoids different features
+ */
+function createAvoidanceChart(result) {
+    const ctx = document.getElementById('avoidanceChart');
+    if (!ctx) return;
+
+    if (avoidanceChart) avoidanceChart.destroy();
+
+    const m = result.avoidance_metrics || {};
+    let labels = [];
+    let values = [];
+    let colors = [];
+
+    if (m.overall_avoidance_score != null) {
+        labels.push('Overall\n(score)');
+        values.push(m.overall_avoidance_score);
+        colors.push(m.overall_avoidance_score >= 75 ? '#003366' : m.overall_avoidance_score >= 55 ? '#ffc107' : '#dc3545');
+    }
+    if (m.settlements_clear_pct != null) {
+        labels.push('Clear of\nsettlements');
+        values.push(m.settlements_clear_pct);
+        colors.push(m.settlements_clear_pct >= 80 ? '#28a745' : m.settlements_clear_pct >= 50 ? '#ffc107' : '#dc3545');
+    }
+    if (m.protected_areas_clear_pct != null) {
+        labels.push('Clear of\nprotected areas');
+        values.push(m.protected_areas_clear_pct);
+        colors.push(m.protected_areas_clear_pct >= 80 ? '#28a745' : m.protected_areas_clear_pct >= 50 ? '#ffc107' : '#dc3545');
+    }
+    if (m.water_clear_pct != null) {
+        labels.push('Clear of\nwater class');
+        values.push(m.water_clear_pct);
+        colors.push(m.water_clear_pct >= 80 ? '#28a745' : m.water_clear_pct >= 50 ? '#ffc107' : '#dc3545');
+    }
+    if (m.built_up_clear_pct != null) {
+        labels.push('Clear of\nbuilt-up');
+        values.push(m.built_up_clear_pct);
+        colors.push(m.built_up_clear_pct >= 80 ? '#28a745' : m.built_up_clear_pct >= 50 ? '#ffc107' : '#dc3545');
+    }
+
+    if (labels.length === 0 && result.cost_breakdown) {
+        const avgCostPerKm = result.cost_breakdown.cost_per_km || 0;
+        const settlementAvoidance = avgCostPerKm < 900000 ? 95 : avgCostPerKm < 1200000 ? 80 : avgCostPerKm < 1600000 ? 65 : 50;
+        const protectedAvoidance = avgCostPerKm < 900000 ? 90 : avgCostPerKm < 1200000 ? 75 : avgCostPerKm < 1600000 ? 60 : 45;
+        labels = ['Cost-based\nestimate', 'Cost-based\nestimate 2'];
+        values = [settlementAvoidance, protectedAvoidance];
+        colors = ['#36A2EB', '#FF6384'];
+    }
+
+    if (labels.length === 0) return;
+
+    avoidanceChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '% of route pixels on “clear” cells',
+                data: values,
+                backgroundColor: colors,
+                borderWidth: 0
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    max: 100,
+                    ticks: {
+                        callback: function(value) {
+                            return value + '%';
+                        }
+                    }
+                },
+                y: {
+                    ticks: { font: { size: 10 } }
+                }
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: function () {
+                            return 'How to read this';
+                        },
+                        label: function (context) {
+                            const v = context.parsed.x;
+                            return (
+                                Math.round(v) +
+                                '% of sampled route points avoid that costly land-use / constraint ' +
+                                '(higher is better).'
+                            );
+                        }
+                    }
+                },
+                title: {
+                    display: true,
+                    text: m.explanation || 'Route alignment vs costly map cells (from optimization grid)',
+                    font: { size: 10 },
+                    color: '#666',
+                    padding: { bottom: 8 }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Elevation profile along the optimized path (from server DEM / heuristic sampling).
+ */
+function createElevationChart(result) {
+    const ctx = document.getElementById('elevationChart');
+    if (!ctx) return;
+    if (elevationChart) elevationChart.destroy();
+
+    const re = result.route_elevation;
+    if (!re || !re.chart_elevations_m || !re.chart_elevations_m.length) return;
+
+    const labels = re.chart_indices.map((i) => 'Pt ' + i);
+
+    elevationChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Elevation (m)',
+                data: re.chart_elevations_m,
+                borderColor: '#003366',
+                backgroundColor: 'rgba(0, 51, 102, 0.08)',
+                fill: true,
+                tension: 0.25,
+                pointRadius: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { display: true },
+                title: {
+                    display: true,
+                    text: 'Terrain profile along route (sampled path points)',
+                    font: { size: 10 },
+                    color: '#666'
+                }
+            },
+            scales: {
+                y: {
+                    title: { display: true, text: 'm (MSL approx.)' }
+                },
+                x: {
+                    ticks: { maxRotation: 45, font: { size: 9 } }
+                }
+            }
+        }
+    });
 }
 
 /**

@@ -3,6 +3,13 @@ Main entry point for Transmission Line Routing Optimization Tool
 Run this file to start the Flask development server
 """
 import os
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from app import create_app
 
 # Get configuration from environment variable or use default

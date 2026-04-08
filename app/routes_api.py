@@ -18,6 +18,7 @@ from app.optimizer.engineering_validation import EngineeringValidator
 from app.services.corridor_restriction import CorridorRestrictionService
 from app.services.gis_data_loader import load_layers_for_bounds
 from app.services.uganda_gis_loader import UgandaGISLoader
+from app.services.elevation_sampling import sample_elevations_m, downsample_for_chart
 
 api_bp = Blueprint('api', __name__)
 
@@ -131,9 +132,14 @@ def create_project():
     }), 201
 
 
-def _run_pathfinder(cost_surface, bounds, route_points, algorithm):
+def _run_pathfinder(cost_surface, bounds, route_points, algorithm, resolution_m=30):
     """Run dijkstra or astar and return path_result, path_coords, pathfinder for a single algorithm."""
     try:
+        # Check cost surface size
+        height, width = cost_surface.shape
+        total_pixels = height * width
+        print(f"🔍 Pathfinding on {width} × {height} = {total_pixels:,} pixels")
+
         if algorithm == 'astar':
             pathfinder = AStarPathFinder(cost_surface)
         else:
@@ -160,11 +166,11 @@ def _run_pathfinder(cost_surface, bounds, route_points, algorithm):
             total_cost += segment_result['total_cost']
 
         path_result = {'path': all_paths, 'total_cost': total_cost, 'distance': len(all_paths)}
-        path_coords = pathfinder.path_to_coordinates(path_result['path'], bounds, 30)
+        path_coords = pathfinder.path_to_coordinates(path_result['path'], bounds, resolution_m)
         return path_result, path_coords, pathfinder
     except MemoryError as e:
         print(f"❌ Memory error in pathfinding: {str(e)}")
-        raise MemoryError("Route area too large for pathfinding. Please reduce distance or add waypoints.")
+        raise MemoryError("Route area too large for pathfinding. Please add waypoints to break the route into smaller segments.")
 
 
 @api_bp.route('/projects/<int:project_id>/optimize', methods=['POST'])
@@ -197,12 +203,37 @@ def optimize_route(project_id):
         db.session.commit()
 
         ahp_weights = project.get_ahp_weights() or current_app.config['DEFAULT_AHP_WEIGHTS']
-        margin = 0.1
+        
+        # Get waypoints if any
+        proj_metadata = project.get_metadata()
+        waypoints_data = proj_metadata.get('waypoints', []) if proj_metadata else []
+        
+        # Calculate geographic span including waypoints
+        all_lons = [project.start_lon, project.end_lon] + [wp['lon'] for wp in waypoints_data if 'lon' in wp]
+        all_lats = [project.start_lat, project.end_lat] + [wp['lat'] for wp in waypoints_data if 'lat' in wp]
+        
+        lon_span = max(all_lons) - min(all_lons)
+        lat_span = max(all_lats) - min(all_lats)
+        span_deg = max(lon_span, lat_span)
+        
+        # Calculate approximate distance in km for logging and validation
+        approx_distance_km = span_deg * 111  # Rough conversion (1 degree ≈ 111 km)
+        print(f"📏 Route span: {lon_span:.3f}° lon × {lat_span:.3f}° lat (~{approx_distance_km:.1f} km)")
+        print(f"📍 Waypoints: {len(waypoints_data)} intermediate points")
+        
+        # Wider margin for long routes (multi-district): scale with geographic span
+        # For very long routes (>100km), use larger margins to ensure corridor coverage
+        if approx_distance_km > 100:
+            margin = max(0.15, min(2.0, 0.2 + 0.15 * span_deg))
+            print(f"🗺️ Long route detected - using extended margin: {margin:.3f}°")
+        else:
+            margin = max(0.06, min(1.2, 0.12 + 0.25 * span_deg))
+        
         bounds = [
-            min(project.start_lon, project.end_lon) - margin,
-            min(project.start_lat, project.end_lat) - margin,
-            max(project.start_lon, project.end_lon) + margin,
-            max(project.start_lat, project.end_lat) + margin
+            min(all_lons) - margin,
+            min(all_lats) - margin,
+            max(all_lons) + margin,
+            max(all_lats) + margin
         ]
 
         cost_generator = CostSurfaceGenerator(current_app.config)
@@ -210,37 +241,107 @@ def optimize_route(project_id):
         # We precompute an expected raster shape so real rasters can be resampled consistently.
         layers_data = {}
         data_source = "demo"
-        try:
-            shape = _shape_from_bounds(bounds, resolution_m=30)
 
-            # Check if shape is reasonable
+        # Auto-adjust resolution based on area size to prevent memory errors
+        resolution_m = 30  # Start with 30m resolution
+        # Cap grid size to reduce RAM (float32 pathfinder + scipy temps still need headroom)
+        # Increased limit for better long-distance route quality with real DEM
+        max_pixels = 2_500_000 if approx_distance_km > 100 else 1_500_000
+        # For very long routes, allow up to 2km resolution to handle district-to-district routing
+        max_resolution = 2000 if approx_distance_km > 200 else (1500 if approx_distance_km > 100 else 1000)
+
+        try:
+            # Calculate initial shape
+            shape = _shape_from_bounds(bounds, resolution_m=resolution_m)
             height, width = shape
             total_pixels = height * width
+
+            # If too large, automatically increase resolution (lower detail)
+            iteration = 0
+            while total_pixels > max_pixels and resolution_m < max_resolution:
+                # Calculate exact scaling factor needed
+                scale_factor = (total_pixels / max_pixels) ** 0.5
+                resolution_m *= max(1.3, scale_factor)  # At least 1.3x, or more if needed
+                shape = _shape_from_bounds(bounds, resolution_m=resolution_m)
+                height, width = shape
+                total_pixels = height * width
+                iteration += 1
+                print(f"⚠️ Area too large, adjusting resolution to {resolution_m:.0f}m (iteration {iteration})")
+
+                # Safety check to prevent infinite loop
+                if iteration > 15:
+                    print(f"❌ Could not reduce to acceptable size after 15 iterations")
+                    break
+
             estimated_memory_mb = (total_pixels * 8) / (1024 * 1024)  # 8 bytes per float64
 
             print(f"📊 Raster dimensions: {width} × {height} = {total_pixels:,} pixels")
+            print(f"📏 Resolution: {resolution_m:.0f}m per pixel")
             print(f"💾 Estimated memory: {estimated_memory_mb:.1f} MB")
 
-            layers_data = load_layers_for_bounds(current_app.config, tuple(bounds), shape)
-            if layers_data:
-                data_source = "real"
+            # Check if still too large
+            if total_pixels > max_pixels:
+                # Calculate approximate route distance
+                min_lon, min_lat, max_lon, max_lat = bounds
+                approx_distance_km = ((max_lon - min_lon) ** 2 + (max_lat - min_lat) ** 2) ** 0.5 * 111
+
+                print(f"❌ Area still too large even at {resolution_m:.0f}m resolution")
+                print(f"📏 Approximate route distance: {approx_distance_km:.0f} km")
+
+                # Suggest number of waypoints needed based on distance
+                if approx_distance_km > 300:
+                    segment_size = 75  # For very long routes, use smaller segments
+                elif approx_distance_km > 150:
+                    segment_size = 60
+                else:
+                    segment_size = 50
+                    
+                num_segments = int(approx_distance_km / segment_size) + 1
+                num_waypoints = max(1, num_segments - 1)
+
+                # Provide helpful guidance based on route length
+                if approx_distance_km > 200:
+                    guidance = f"This is a very long route (~{approx_distance_km:.0f} km) crossing multiple districts. "
+                    guidance += f"Add {num_waypoints} waypoints to break it into {num_segments} segments of ~{segment_size}km each. "
+                    guidance += "Place waypoints at major towns or landmarks along the desired path."
+                else:
+                    guidance = f"Route area is large (~{approx_distance_km:.0f} km). "
+                    guidance += f"Add {num_waypoints} waypoint(s) to break the route into {num_segments} segments of ~{segment_size}km each."
+
+                return jsonify({
+                    'error': guidance,
+                    'route_distance_km': round(approx_distance_km, 1),
+                    'recommended_waypoints': num_waypoints,
+                    'recommended_segment_size_km': segment_size
+                }), 400
+
+            try:
+                layers_data = load_layers_for_bounds(current_app.config, tuple(bounds), shape)
+                if layers_data:
+                    data_source = "real"
+            except Exception as layer_error:
+                print(f"⚠️ Could not load real GIS layers: {str(layer_error)}")
+                print(f"⚠️ Falling back to demo data")
+                layers_data = None
         except MemoryError as e:
             print(f"❌ Memory error: {str(e)}")
             return jsonify({
-                'error': 'Route area too large. Please reduce the distance between start and end points, or add waypoints to break the route into smaller segments.'
+                'error': 'Route area too large. Please add waypoints to break the route into smaller segments (recommended: segments < 50km each).'
             }), 400
         except Exception as e:
             print(f"⚠️ Error loading layers: {str(e)}")
             layers_data = {}
             data_source = "demo"
         if not layers_data:
-            layers_data = _create_demo_layers(bounds, current_app.config)
+            layers_data = _create_demo_layers(bounds, current_app.config, shape)
 
         cost_surface, metadata = cost_generator.generate_composite_cost_surface(
-            bounds, ahp_weights, layers_data
+            bounds, ahp_weights, layers_data, resolution=resolution_m, grid_shape=shape
         )
+        cost_surface = np.asarray(cost_surface, dtype=np.float32)
         metadata = metadata or {}
         metadata["data_source"] = data_source
+        metadata["resolution_m"] = resolution_m
 
         cost_surface_path = os.path.join(
             current_app.config['DATA_FOLDER'],
@@ -250,17 +351,18 @@ def optimize_route(project_id):
         cost_surf_record = CostSurface(
             project_id=project.id,
             file_path=cost_surface_path,
-            resolution=30,
+            resolution=int(resolution_m),
             layer_weights=json.dumps(ahp_weights)
         )
         cost_surf_record.set_bounds(bounds)
         db.session.add(cost_surf_record)
 
-        proj_metadata = project.get_metadata()
-        waypoints_data = proj_metadata.get('waypoints', []) if proj_metadata else []
+        # Build route points from start -> waypoints -> end
         route_points = [{'lat': project.start_lat, 'lon': project.start_lon}]
         route_points.extend(waypoints_data)
         route_points.append({'lat': project.end_lat, 'lon': project.end_lon})
+        
+        print(f"🛤️ Route has {len(route_points)} points total ({len(waypoints_data)} waypoints)")
 
         comparison = {}
         path_result = None
@@ -273,7 +375,7 @@ def optimize_route(project_id):
             temp_validator = EngineeringValidator(current_app.config)
 
             for algo in ('dijkstra', 'astar'):
-                pr, pc, pf = _run_pathfinder(cost_surface, bounds, route_points, algo)
+                pr, pc, pf = _run_pathfinder(cost_surface, bounds, route_points, algo, resolution_m)
                 if pr is not None:
                     # Calculate actual distance in kilometers
                     distance_m = temp_validator._calculate_route_length(pc)
@@ -288,9 +390,9 @@ def optimize_route(project_id):
                 else:
                     comparison[algo] = None
             # Use requested algorithm for main result
-            path_result, path_coords, pathfinder = _run_pathfinder(cost_surface, bounds, route_points, algorithm)
+            path_result, path_coords, pathfinder = _run_pathfinder(cost_surface, bounds, route_points, algorithm, resolution_m)
         else:
-            path_result, path_coords, pathfinder = _run_pathfinder(cost_surface, bounds, route_points, algorithm)
+            path_result, path_coords, pathfinder = _run_pathfinder(cost_surface, bounds, route_points, algorithm, resolution_m)
 
         if path_result is None or path_coords is None or pathfinder is None:
             project.status = 'failed'
@@ -298,12 +400,31 @@ def optimize_route(project_id):
             return jsonify({'error': 'No valid path found for the selected algorithm'}), 400
 
         simplified_path = pathfinder.simplify_path(path_result['path'], tolerance=1)
-        simplified_coords = pathfinder.path_to_coordinates(simplified_path, bounds, 30)
+        simplified_coords = pathfinder.path_to_coordinates(simplified_path, bounds, resolution_m)
 
         validator = EngineeringValidator(current_app.config)
         validation_result = validator.validate_route(path_coords)
         tower_positions = validator.generate_tower_positions(path_coords)
         detailed_costs = validator.calculate_detailed_costs(path_coords, tower_positions)
+
+        # Elevation (m) for towers + route profile chart — avoids all-zero display when DEM is synthetic
+        try:
+            tower_elevations = sample_elevations_m(current_app.config, tower_positions)
+            tower_positions = [
+                [tower_positions[i][0], tower_positions[i][1], tower_elevations[i]]
+                for i in range(len(tower_positions))
+            ]
+        except Exception as ex:
+            print(f"⚠️ Tower elevation sampling: {ex}")
+        path_elevations = sample_elevations_m(current_app.config, path_coords)
+        chart_idx, chart_elev = downsample_for_chart(path_elevations)
+        route_elevation = {
+            'min_m': float(min(path_elevations)) if path_elevations else None,
+            'max_m': float(max(path_elevations)) if path_elevations else None,
+            'avg_m': float(sum(path_elevations) / len(path_elevations)) if path_elevations else None,
+            'chart_indices': chart_idx,
+            'chart_elevations_m': chart_elev,
+        }
 
         route_geojson = {
             'type': 'Feature',
@@ -337,8 +458,15 @@ def optimize_route(project_id):
         project.status = 'completed'
         db.session.commit()
 
+        # Add resolution info message if adjusted
+        message = 'Route optimized successfully'
+        if resolution_m > 30:
+            message += f' (resolution adjusted to {resolution_m:.0f}m for large area)'
+
+        avoidance_metrics = _compute_avoidance_metrics(layers_data, path_result['path'], shape)
+
         response = {
-            'message': 'Route optimized successfully',
+            'message': message,
             'route_id': route.id,
             'route': route_geojson,
             'tower_positions': tower_positions,
@@ -346,6 +474,10 @@ def optimize_route(project_id):
             'cost_breakdown': detailed_costs,
             'metadata': proj_metadata,
             'algorithm_used': chosen_algorithm,
+            'resolution_m': resolution_m,
+            'cost_surface_metadata': metadata,
+            'avoidance_metrics': avoidance_metrics,
+            'route_elevation': route_elevation,
         }
         if comparison:
             response['algorithm_comparison'] = comparison
@@ -416,6 +548,14 @@ def generate_towers(project_id):
         # Generate tower positions
         validator = EngineeringValidator(current_app.config)
         tower_positions = validator.generate_tower_positions(path_coords)
+        try:
+            te = sample_elevations_m(current_app.config, tower_positions)
+            tower_positions = [
+                [tower_positions[i][0], tower_positions[i][1], te[i]]
+                for i in range(len(tower_positions))
+            ]
+        except Exception as ex:
+            print(f"⚠️ Tower elevation (generate_towers): {ex}")
 
         # Calculate detailed costs with towers
         detailed_costs = validator.calculate_detailed_costs(path_coords, tower_positions)
@@ -474,15 +614,19 @@ def export_route(route_id):
                 'crs_description': 'pyproj not installed. Coordinates in lon, lat, elevation (elevation placeholder 0).',
                 'coordinates': [[c[0], c[1], 0.0] for c in coords_wgs84]
             })
+
+        elevations = sample_elevations_m(current_app.config, coords_wgs84)
+
         target_crs = request.args.get('crs') or current_app.config.get('PREFERRED_PROJECTED_CRS', 'EPSG:21096')
         transformer = Transformer.from_crs('EPSG:4326', target_crs, always_xy=True)
         xyz = []
-        for lon, lat in coords_wgs84:
+        for (lon, lat), elev in zip(coords_wgs84, elevations):
             easting, northing = transformer.transform(lon, lat)
-            xyz.append([easting, northing, 0.0])  # elevation 0 without DEM lookup
+            xyz.append([easting, northing, elev])
+
         return jsonify({
             'crs': target_crs,
-            'crs_description': 'Eastings, Northings, elevation (m). Elevation 0 if not from DEM.',
+            'crs_description': f'Eastings, Northings, elevation (m). Elevation from DEM data (or default 1000m for Uganda).',
             'coordinates': xyz
         })
 
@@ -519,7 +663,7 @@ def get_layers():
     except Exception:
         layers_data = {}
     if not layers_data:
-        layers_data = _create_demo_layers(bounds, current_app.config)
+        layers_data = _create_demo_layers(bounds, current_app.config, out_shape)
     result = {}
     min_lon, min_lat, max_lon, max_lat = bounds
     height, width = layers_data['dem'].shape
@@ -636,22 +780,31 @@ def get_route_corridor(route_id):
     })
 
 
-def _create_demo_layers(bounds, config):
+def _create_demo_layers(bounds, config, shape=None):
     """
     Create demo GIS layers for testing
     In production, replace with actual data loading
-    """
-    # Calculate dimensions
-    min_lon, min_lat, max_lon, max_lat = bounds
-    width = int((max_lon - min_lon) * 111320 / 30)
-    height = int((max_lat - min_lat) * 111320 / 30)
 
-    # Create synthetic layers
-    dem = np.random.rand(height, width) * 100  # Random elevation 0-100m
-    land_use = np.random.choice([10, 30, 40, 50, 80, 90], size=(height, width))
-    settlements = np.random.choice([0, 1], size=(height, width), p=[0.95, 0.05])
-    protected_areas = np.random.choice([0, 1], size=(height, width), p=[0.9, 0.1])
-    roads = np.random.choice([0, 1], size=(height, width), p=[0.98, 0.02])
+    Args:
+        bounds: [min_lon, min_lat, max_lon, max_lat]
+        config: Flask config
+        shape: Optional (height, width) tuple. If None, calculates from bounds at 30m resolution
+    """
+    if shape is None:
+        # Calculate dimensions at 30m resolution (legacy behavior)
+        min_lon, min_lat, max_lon, max_lat = bounds
+        width = int((max_lon - min_lon) * 111320 / 30)
+        height = int((max_lat - min_lat) * 111320 / 30)
+    else:
+        height, width = shape
+
+    # Create synthetic layers with memory-efficient dtypes
+    # Synthetic DEM in plausible meters (800–1600 m) when no real SRTM GeoTIFF is present
+    dem = (800.0 + np.random.rand(height, width).astype(np.float32) * 800.0)
+    land_use = np.random.choice([10, 30, 40, 50, 80, 90], size=(height, width)).astype(np.int16)
+    settlements = np.random.choice([0, 1], size=(height, width), p=[0.95, 0.05]).astype(np.int8)
+    protected_areas = np.random.choice([0, 1], size=(height, width), p=[0.9, 0.1]).astype(np.int8)
+    roads = np.random.choice([0, 1], size=(height, width), p=[0.98, 0.02]).astype(np.int8)
 
     return {
         'dem': dem,
@@ -675,8 +828,9 @@ def _shape_from_bounds(bounds, resolution_m: float = 30) -> tuple:
     height = int((max_lat - min_lat) * 111320 / resolution_m)
 
     # Limit maximum dimensions to prevent memory issues
-    MAX_DIMENSION = 2000  # Maximum pixels in any dimension
-    MAX_TOTAL_PIXELS = 2000 * 2000  # Maximum total pixels (4 million)
+    # Increased limits for better long-distance route quality with real DEM data
+    MAX_DIMENSION = 1500  # Maximum pixels in any dimension (memory-safe)
+    MAX_TOTAL_PIXELS = 2_500_000  # Must match optimize_route cap
 
     # If dimensions are too large, adjust resolution
     if width > MAX_DIMENSION or height > MAX_DIMENSION or (width * height) > MAX_TOTAL_PIXELS:
@@ -699,6 +853,77 @@ def _shape_from_bounds(bounds, resolution_m: float = 30) -> tuple:
     width = max(1, width)
     height = max(1, height)
     return (height, width)
+
+
+def _compute_avoidance_metrics(layers_data, path_pixels, shape):
+    """
+    Beginner-friendly scores: percent of route pixels that stay OFF costly cells
+    (settlements, protected, water, built-up) in the same raster used for optimization.
+    """
+    if not path_pixels or not layers_data:
+        return {
+            'explanation': 'After optimization, we check each pixel along the path against the input maps.'
+        }
+    h, w = int(shape[0]), int(shape[1])
+
+    def _clip(r, c):
+        if 0 <= r < h and 0 <= c < w:
+            return r, c
+        return None
+
+    out = {}
+
+    if 'settlements' in layers_data:
+        arr = np.asarray(layers_data['settlements'])
+        bad = tot = 0
+        for r, c in path_pixels:
+            cc = _clip(r, c)
+            if not cc:
+                continue
+            tot += 1
+            if arr[cc[0], cc[1]] > 0:
+                bad += 1
+        if tot:
+            out['settlements_clear_pct'] = round(100.0 * (1.0 - bad / tot), 1)
+
+    if 'protected_areas' in layers_data:
+        arr = np.asarray(layers_data['protected_areas'])
+        bad = tot = 0
+        for r, c in path_pixels:
+            cc = _clip(r, c)
+            if not cc:
+                continue
+            tot += 1
+            if arr[cc[0], cc[1]] > 0:
+                bad += 1
+        if tot:
+            out['protected_areas_clear_pct'] = round(100.0 * (1.0 - bad / tot), 1)
+
+    if 'land_use' in layers_data:
+        arr = np.asarray(layers_data['land_use'])
+        water = built = tot = 0
+        for r, c in path_pixels:
+            cc = _clip(r, c)
+            if not cc:
+                continue
+            tot += 1
+            v = int(arr[cc[0], cc[1]])
+            if v == 80:
+                water += 1
+            if v == 50:
+                built += 1
+        if tot:
+            out['water_clear_pct'] = round(100.0 * (1.0 - water / tot), 1)
+            out['built_up_clear_pct'] = round(100.0 * (1.0 - built / tot), 1)
+
+    out['explanation'] = (
+        'Higher bars mean more of the line avoids that type of costly area in the analysis grid '
+        '(not crossing settlement/protected pixels, water, or dense urban land-use cells).'
+    )
+    pct_vals = [v for k, v in out.items() if k.endswith('_pct') and isinstance(v, (int, float))]
+    if pct_vals:
+        out['overall_avoidance_score'] = round(sum(pct_vals) / len(pct_vals), 1)
+    return out
 
 
 def _geo_to_pixel(lon, lat, bounds, shape):
