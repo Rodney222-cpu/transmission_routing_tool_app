@@ -262,16 +262,8 @@
                         <div class="layer-category" style="margin-bottom: 6px;">
                             <p style="font-size: 8px; color: #666; margin: 0 0 2px 0; font-weight: 600;">TRANSPORT</p>
                             <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
-                                <input type="checkbox" id="showTransport" style="margin-right: 4px;">
-                                <span>🚌 Public Transit</span>
-                            </label>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
                                 <input type="checkbox" id="showCyclOSM" style="margin-right: 4px;">
                                 <span>🚴 Cycling Routes</span>
-                            </label>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
-                                <input type="checkbox" id="showCycleMap" style="margin-right: 4px;">
-                                <span>🚲 Cycle Paths</span>
                             </label>
                         </div>
                         
@@ -283,15 +275,23 @@
                             </label>
                             <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
                                 <input type="checkbox" id="showShortbread" style="margin-right: 4px;">
-                                <span>🗺️ Simplified Style</span>
+                                <span>🗺️ Light/Clean Style</span>
                             </label>
                         </div>
                         
                         <div class="layer-category" style="margin-bottom: 6px;">
-                            <p style="font-size: 8px; color: #666; margin: 0 0 2px 0; font-weight: 600;">PREMIUM</p>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
+                            <p style="font-size: 8px; color: #666; margin: 0 0 2px 0; font-weight: 600;">API KEY REQUIRED</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px; opacity: 0.7;">
+                                <input type="checkbox" id="showCycleMap" style="margin-right: 4px;">
+                                <span>🚲 Cycle Paths (Thunderforest)</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px; opacity: 0.7;">
+                                <input type="checkbox" id="showTransport" style="margin-right: 4px;">
+                                <span>🚌 Transit Map (Thunderforest)</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px; opacity: 0.7;">
                                 <input type="checkbox" id="showMapTiler" style="margin-right: 4px;">
-                                <span>✨ Vector Tiles (API key)</span>
+                                <span>✨ Vector Tiles (MapTiler)</span>
                             </label>
                         </div>
                         
