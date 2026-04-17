@@ -8,13 +8,6 @@
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
-    <!-- MapTiler / Thunderforest keys from server config (.env MAPTILER_API_KEY, THUNDERFOREST_API_KEY) -->
-    <script>
-        window.MAP_KEYS = window.MAP_KEYS || {};
-        window.MAP_KEYS.maptiler = {{ maptiler_key|tojson }};
-        window.MAP_KEYS.thunderforest = {{ thunderforest_key|tojson }};
-    </script>
-
     <!-- Chart.js for graphical analysis -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
@@ -231,53 +224,13 @@
                 <!-- Map Controls - Compact Layer Panel -->
                 <div class="map-controls" style="max-height: 220px; overflow-y: auto;">
                     <div class="control-group" style="padding: 8px;">
-                        <p class="help-text" style="margin-bottom: 4px; font-size: 10px; font-weight: 600;">🗺️ Map Styles</p>
+                        <p class="help-text" style="margin-bottom: 4px; font-size: 10px; font-weight: 600;">🗺️ Uganda Basemap</p>
                         
                         <div class="layer-category" style="margin-bottom: 6px;">
-                            <p style="font-size: 8px; color: #666; margin: 0 0 2px 0; font-weight: 600;">GENERAL</p>
+                            <p style="font-size: 8px; color: #666; margin: 0 0 2px 0; font-weight: 600;">BASEMAP</p>
                             <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
-                                <input type="checkbox" id="showStandard" style="margin-right: 4px;">
-                                <span>📍 Standard</span>
-                            </label>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
-                                <input type="checkbox" id="showHumanitarian" style="margin-right: 4px;">
-                                <span>🏘️ Buildings & Roads</span>
-                            </label>
-                        </div>
-                        
-                        <div class="layer-category" style="margin-bottom: 6px;">
-                            <p style="font-size: 8px; color: #666; margin: 0 0 2px 0; font-weight: 600;">TRANSPORT</p>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
-                                <input type="checkbox" id="showCyclOSM" style="margin-right: 4px;">
-                                <span>🚴 Cycling Routes</span>
-                            </label>
-                        </div>
-                        
-                        <div class="layer-category" style="margin-bottom: 6px;">
-                            <p style="font-size: 8px; color: #666; margin: 0 0 2px 0; font-weight: 600;">TERRAIN</p>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
-                                <input type="checkbox" id="showTopo" style="margin-right: 4px;">
-                                <span>⛰️ Topographic Map</span>
-                            </label>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
-                                <input type="checkbox" id="showShortbread" style="margin-right: 4px;">
-                                <span>🗺️ Light/Clean Style</span>
-                            </label>
-                        </div>
-                        
-                        <div class="layer-category" style="margin-bottom: 6px;">
-                            <p style="font-size: 8px; color: #666; margin: 0 0 2px 0; font-weight: 600;">API KEY REQUIRED</p>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px; opacity: 0.7;">
-                                <input type="checkbox" id="showCycleMap" style="margin-right: 4px;">
-                                <span>🚲 Cycle Paths (Thunderforest)</span>
-                            </label>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px; opacity: 0.7;">
-                                <input type="checkbox" id="showTransport" style="margin-right: 4px;">
-                                <span>🚌 Transit Map (Thunderforest)</span>
-                            </label>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px; opacity: 0.7;">
-                                <input type="checkbox" id="showMapTiler" style="margin-right: 4px;">
-                                <span>✨ Vector Tiles (MapTiler)</span>
+                                <input type="checkbox" id="showUgandaBoundary" checked disabled style="margin-right: 4px;">
+                                <span>🇺🇬 Uganda Boundary (ug.json)</span>
                             </label>
                         </div>
                         
@@ -298,7 +251,6 @@
     <!-- Custom JS -->
     <script src="{{ url_for('static', filename='js/map.js') }}"></script>
     <script src="{{ url_for('static', filename='js/optimize.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/layers.js') }}"></script>
 </body>
 </html>
 
