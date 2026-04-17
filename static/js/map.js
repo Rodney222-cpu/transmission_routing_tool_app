@@ -29,44 +29,51 @@ let currentWaypointId = null; // ID of waypoint being placed
  * Initialize the map
  */
 function initMap() {
-    // Create map centered on Uganda (Kampala area)
-    map = L.map('map').setView([1.3733, 32.2903], 8);
+    // Uganda bounds: approximately [0.5, 29.5] to [4.5, 35.0]
+    const ugandaBounds = [[0.5, 29.5], [4.5, 35.0]];
     
-    // Uganda-optimized basemaps (NO OpenStreetMap)
-    // CartoDB Positron - clean, light style good for overlays
-    const cartoPositron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; CARTO',
+    // Create map centered on Uganda with restricted view
+    map = L.map('map', {
+        center: [1.3733, 32.2903],
+        zoom: 8,
+        minZoom: 7,
+        maxZoom: 18,
+        maxBounds: ugandaBounds,
+        maxBoundsViscosity: 1.0  // Hard restrict to Uganda bounds
+    });
+    
+    // Uganda-only basemap using ESRI World Imagery with Uganda focus
+    // Using a custom approach: ESRI imagery clipped to Uganda
+    const ugandaBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri | Uganda Focus',
+        maxZoom: 18,
+        bounds: ugandaBounds  // Only load tiles within Uganda bounds
+    });
+    
+    // Alternative: CartoDB Positron (light) - also clipped to Uganda
+    const ugandaLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; CARTO | Uganda Focus',
         subdomains: 'abcd',
-        maxZoom: 20
+        maxZoom: 20,
+        bounds: ugandaBounds
     });
     
-    // CartoDB Dark Matter - dark style for contrast
-    const cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; CARTO',
+    // Alternative: CartoDB Dark - clipped to Uganda
+    const ugandaDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; CARTO | Uganda Focus',
         subdomains: 'abcd',
-        maxZoom: 20
+        maxZoom: 20,
+        bounds: ugandaBounds
     });
     
-    // ESRI World Topo Map - detailed topography
-    const esriTopo = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Tiles &copy; Esri',
-        maxZoom: 18
-    });
+    // Add default basemap (Uganda Light)
+    ugandaLight.addTo(map);
     
-    // ESRI World Street Map - alternative street view
-    const esriStreet = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Tiles &copy; Esri',
-        maxZoom: 18
-    });
+    // Fit map to Uganda bounds
+    map.fitBounds(ugandaBounds);
     
-    // Satellite imagery
-    const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Tiles &copy; Esri',
-        maxZoom: 18
-    });
-    
-    // Add default basemap (Carto Positron - good for seeing overlays)
-    cartoPositron.addTo(map);
+    // Add Uganda border outline
+    addUgandaBorder();
     
     // GIS overlay layers from SHAPEFILES (NOT added by default - user must select)
     const overlayLayers = {
@@ -80,13 +87,11 @@ function initMap() {
         "⚡ Power Lines & Substations": createPowerInfraLayer()
     };
 
-    // Layer control with base maps and overlays (NO OpenStreetMap)
+    // Layer control with Uganda-only base maps
     const baseMaps = {
-        "🗺️ Light (Carto)": cartoPositron,
-        "🗺️ Dark (Carto)": cartoDark,
-        "🗺️ Topo (ESRI)": esriTopo,
-        "🛣️ Street (ESRI)": esriStreet,
-        "🛰️ Satellite (ESRI)": satellite
+        "🇺🇬 Uganda (Light)": ugandaLight,
+        "🇺🇬 Uganda (Satellite)": ugandaBase,
+        "🇺🇬 Uganda (Dark)": ugandaDark
     };
 
     L.control.layers(baseMaps, overlayLayers, {collapsed: true, position: 'topright'}).addTo(map);
@@ -578,4 +583,47 @@ function displayCorridor(corridorGeoJSON) {
 
 // Initialize map when page loads
 document.addEventListener('DOMContentLoaded', initMap);
+
+/**
+ * Add Uganda country border outline
+ */
+function addUgandaBorder() {
+    // Uganda border coordinates (simplified polygon)
+    const ugandaBorder = [
+        [4.5, 30.0],      // North-West (South Sudan border)
+        [4.5, 30.5],      // North
+        [4.2, 31.0],      // North-East
+        [3.8, 32.0],      // North-East
+        [3.5, 33.0],      // North-East (Kenya border)
+        [2.5, 34.0],      // East (Kenya border)
+        [1.5, 34.5],      // East
+        [0.5, 34.0],      // South-East (Tanzania border)
+        [0.5, 33.5],      // South
+        [0.8, 32.5],      // South
+        [1.0, 31.5],      // South-West (Rwanda border)
+        [1.5, 30.5],      // South-West
+        [2.5, 30.0],      // West (DRC border)
+        [3.5, 29.8],      // West
+        [4.5, 30.0]       // Close polygon
+    ];
+    
+    // Add border polygon
+    L.polygon(ugandaBorder, {
+        color: '#FF0000',
+        weight: 3,
+        opacity: 0.8,
+        fillOpacity: 0,
+        dashArray: '10, 5'
+    }).addTo(map).bindPopup('<b>🇺🇬 Uganda</b><br>Country Boundary');
+    
+    // Add country label
+    L.marker([1.3733, 32.2903], {
+        icon: L.divIcon({
+            className: 'uganda-label',
+            html: '<div style="font-size: 24px; font-weight: bold; color: #333; text-shadow: 2px 2px 4px white;">🇺🇬 UGANDA</div>',
+            iconSize: [150, 40],
+            iconAnchor: [75, 20]
+        })
+    }).addTo(map);
+}
 
