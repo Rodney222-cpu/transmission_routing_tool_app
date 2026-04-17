@@ -50,6 +50,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // View corridor button
     document.getElementById('viewCorridorBtn')?.addEventListener('click', viewCorridor);
 
+    // View cost surface button
+    document.getElementById('viewCostSurfaceBtn')?.addEventListener('click', viewCostSurface);
+
     // Add waypoint button
     document.getElementById('addWaypointBtn')?.addEventListener('click', addWaypoint);
 });
@@ -1043,6 +1046,76 @@ async function viewCorridor() {
     } catch (error) {
         console.error('Corridor error:', error);
         alert('Failed to load corridor');
+    }
+}
+
+/**
+ * View cost surface as overlay on map
+ */
+async function viewCostSurface() {
+    if (!currentProject.projectId) {
+        alert('No project available. Optimize a route first.');
+        return;
+    }
+    
+    try {
+        // Show loading
+        const btn = document.getElementById('viewCostSurfaceBtn');
+        const originalText = btn.textContent;
+        btn.textContent = 'Loading...';
+        btn.disabled = true;
+        
+        // Fetch cost surface image
+        const response = await fetch(`/api/projects/${currentProject.projectId}/cost-surface-image`);
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to load cost surface');
+        }
+        
+        // Create blob URL for image
+        const blob = await response.blob();
+        const imageUrl = URL.createObjectURL(blob);
+        
+        // Get project bounds for overlay
+        const projectResponse = await fetch(`/api/projects/${currentProject.projectId}`);
+        const projectData = await projectResponse.json();
+        const bounds = projectData.project.bounds;
+        
+        // Remove existing cost surface layer if any
+        if (window.costSurfaceLayer) {
+            map.removeLayer(window.costSurfaceLayer);
+        }
+        
+        // Add cost surface as image overlay
+        window.costSurfaceLayer = L.imageOverlay(imageUrl, [
+            [bounds.min_lat, bounds.min_lon],
+            [bounds.max_lat, bounds.max_lon]
+        ], {
+            opacity: 0.6,
+            interactive: false
+        }).addTo(map);
+        
+        // Add to layer control
+        if (window.layerControl) {
+            window.layerControl.addOverlay(window.costSurfaceLayer, '🔥 Cost Surface (Heatmap)');
+        }
+        
+        // Fit map to bounds
+        map.fitBounds([
+            [bounds.min_lat, bounds.min_lon],
+            [bounds.max_lat, bounds.max_lon]
+        ]);
+        
+        alert('Cost surface displayed!\n\n🟢 Green = Low cost (preferred)\n🟡 Yellow = Medium cost\n🔴 Red = High cost (avoid)');
+        
+    } catch (error) {
+        console.error('Cost surface error:', error);
+        alert('Error: ' + error.message);
+    } finally {
+        const btn = document.getElementById('viewCostSurfaceBtn');
+        btn.textContent = 'View Cost Surface';
+        btn.disabled = false;
     }
 }
 

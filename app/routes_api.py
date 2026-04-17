@@ -780,6 +780,82 @@ def get_route_corridor(route_id):
     })
 
 
+@api_bp.route('/projects/<int:project_id>/cost-surface-image', methods=['GET'])
+@login_required
+def get_cost_surface_image(project_id):
+    """
+    Get cost surface as a PNG image for visualization.
+    Returns a color-coded heatmap showing high-cost (red) and low-cost (green) areas.
+    """
+    import io
+    from PIL import Image
+    
+    project = Project.query.get_or_404(project_id)
+    
+    if project.user_id != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    # Find the cost surface for this project
+    cost_surface_record = CostSurface.query.filter_by(project_id=project_id).first()
+    if not cost_surface_record:
+        return jsonify({'error': 'Cost surface not found. Optimize a route first.'}), 404
+    
+    # Load the cost surface
+    cost_surface_path = cost_surface_record.file_path
+    if not os.path.exists(cost_surface_path):
+        # Try loading from .npy if GeoTIFF doesn't exist
+        npy_path = cost_surface_path.replace('.tif', '.npy')
+        if os.path.exists(npy_path):
+            cost_surface = np.load(npy_path)
+        else:
+            return jsonify({'error': 'Cost surface file not found'}), 404
+    else:
+        try:
+            import rasterio
+            with rasterio.open(cost_surface_path) as src:
+                cost_surface = src.read(1)
+        except Exception as e:
+            return jsonify({'error': f'Failed to load cost surface: {str(e)}'}), 500
+    
+    # Normalize cost surface to 0-255 for image
+    min_val = np.nanmin(cost_surface)
+    max_val = np.nanmax(cost_surface)
+    if max_val > min_val:
+        normalized = ((cost_surface - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+    else:
+        normalized = np.zeros_like(cost_surface, dtype=np.uint8)
+    
+    # Create color heatmap: green (low cost) -> yellow -> red (high cost)
+    height, width = normalized.shape
+    rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
+    
+    # Green to Red gradient
+    for i in range(height):
+        for j in range(width):
+            val = normalized[i, j]
+            if val < 128:
+                # Green to Yellow
+                rgb_image[i, j] = [int(val * 2), 255, 0]
+            else:
+                # Yellow to Red
+                rgb_image[i, j] = [255, int((255 - val) * 2), 0]
+    
+    # Create PIL Image
+    img = Image.fromarray(rgb_image)
+    
+    # Save to bytes
+    img_io = io.BytesIO()
+    img.save(img_io, 'PNG')
+    img_io.seek(0)
+    
+    return send_file(
+        img_io,
+        mimetype='image/png',
+        as_attachment=False,
+        download_name=f'cost_surface_project_{project_id}.png'
+    )
+
+
 def _create_demo_layers(bounds, config, shape=None):
     """
     Create demo GIS layers for testing
