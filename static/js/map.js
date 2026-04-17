@@ -32,24 +32,31 @@ function initMap() {
     // Create map centered on Uganda (Kampala area)
     map = L.map('map').setView([1.3733, 32.2903], 8);
     
-    // Uganda-optimized basemaps
-    const openStreetMap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
-        maxZoom: 19
-    });
-    
+    // Uganda-optimized basemaps (NO OpenStreetMap)
     // CartoDB Positron - clean, light style good for overlays
     const cartoPositron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+        attribution: '&copy; CARTO',
         subdomains: 'abcd',
         maxZoom: 20
     });
     
     // CartoDB Dark Matter - dark style for contrast
     const cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+        attribution: '&copy; CARTO',
         subdomains: 'abcd',
         maxZoom: 20
+    });
+    
+    // ESRI World Topo Map - detailed topography
+    const esriTopo = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri',
+        maxZoom: 18
+    });
+    
+    // ESRI World Street Map - alternative street view
+    const esriStreet = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri',
+        maxZoom: 18
     });
     
     // Satellite imagery
@@ -61,7 +68,7 @@ function initMap() {
     // Add default basemap (Carto Positron - good for seeing overlays)
     cartoPositron.addTo(map);
     
-    // GIS overlay layers (NOT added by default - user must select)
+    // GIS overlay layers from SHAPEFILES (NOT added by default - user must select)
     const overlayLayers = {
         "🏔️ Elevation (DEM)": createDEMLayer(),
         "🏘️ Settlements (Villages & Towns)": createSettlementsLayer(),
@@ -73,12 +80,13 @@ function initMap() {
         "⚡ Power Lines & Substations": createPowerInfraLayer()
     };
 
-    // Layer control with base maps and overlays
+    // Layer control with base maps and overlays (NO OpenStreetMap)
     const baseMaps = {
         "🗺️ Light (Carto)": cartoPositron,
-        "🗺️ Street (OSM)": openStreetMap,
-        "🌙 Dark (Carto)": cartoDark,
-        "🛰️ Satellite": satellite
+        "🗺️ Dark (Carto)": cartoDark,
+        "🗺️ Topo (ESRI)": esriTopo,
+        "🛣️ Street (ESRI)": esriStreet,
+        "🛰️ Satellite (ESRI)": satellite
     };
 
     L.control.layers(baseMaps, overlayLayers, {collapsed: true, position: 'topright'}).addTo(map);
