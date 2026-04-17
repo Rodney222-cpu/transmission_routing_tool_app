@@ -55,7 +55,7 @@ function initMap() {
     });
     blankBase.createTile = function(coords) {
         const tile = document.createElement('div');
-        tile.style.backgroundColor = '#f0f0f0';  // Light gray background
+        tile.style.backgroundColor = '#e8e8e8';  // Light gray background
         tile.style.width = '256px';
         tile.style.height = '256px';
         return tile;
@@ -65,22 +65,25 @@ function initMap() {
     // Add Uganda shape as the "basemap" - filled with color
     addUgandaBaseMap();
     
-    // Add optional tile layer ONLY within Uganda bounds (for detail)
-    const ugandaDetail = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; CARTO',
-        subdomains: 'abcd',
-        maxZoom: 20,
-        bounds: ugandaBounds,
-        opacity: 0.7  // Semi-transparent to show Uganda base underneath
-    });
+    // Create masked tile layer for detail view
+    // This uses SVG masking to only show tiles within Uganda
+    const ugandaDetail = createMaskedTileLayer(
+        'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+        {
+            attribution: '&copy; CARTO',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }
+    );
     
-    // Add satellite option
-    const ugandaSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Tiles &copy; Esri',
-        maxZoom: 18,
-        bounds: ugandaBounds,
-        opacity: 0.8
-    });
+    // Create masked satellite layer
+    const ugandaSatellite = createMaskedTileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+            attribution: 'Tiles &copy; Esri',
+            maxZoom: 18
+        }
+    );
     
     // Fit map to Uganda bounds
     map.fitBounds(ugandaBounds);
@@ -684,5 +687,94 @@ function addUgandaBorder() {
             iconAnchor: [75, 20]
         })
     }).addTo(map);
+}
+
+/**
+ * Create a tile layer masked to Uganda only
+ * This clips the tiles so only Uganda is visible
+ */
+function createMaskedTileLayer(url, options) {
+    // Uganda border for masking (simplified)
+    const ugandaBorder = [
+        [4.5, 30.0], [4.5, 30.5], [4.2, 31.0], [3.8, 32.0], [3.5, 33.0],
+        [2.5, 34.0], [1.5, 34.5], [0.5, 34.0], [0.5, 33.5], [0.8, 32.5],
+        [1.0, 31.5], [1.5, 30.5], [2.5, 30.0], [3.5, 29.8], [4.5, 30.0]
+    ];
+    
+    // Create custom tile layer with masking
+    const MaskedTileLayer = L.TileLayer.extend({
+        createTile: function(coords, done) {
+            const tile = document.createElement('div');
+            tile.style.width = '256px';
+            tile.style.height = '256px';
+            tile.style.overflow = 'hidden';
+            tile.style.position = 'relative';
+            
+            // Create the actual tile image
+            const img = document.createElement('img');
+            const tileUrl = this.getTileUrl(coords);
+            img.src = tileUrl;
+            img.style.width = '256px';
+            img.style.height = '256px';
+            
+            // Create SVG mask
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('width', '256');
+            svg.setAttribute('height', '256');
+            svg.style.position = 'absolute';
+            svg.style.top = '0';
+            svg.style.left = '0';
+            svg.style.pointerEvents = 'none';
+            
+            // Create clip path for Uganda shape
+            const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            const clipPath = document.createElementNS('http://www.w3.org/2000/svg', 'clipPath');
+            clipPath.setAttribute('id', `uganda-clip-${coords.x}-${coords.y}-${coords.z}`);
+            
+            // Convert Uganda border to tile coordinates
+            const tileSize = 256;
+            const tileBounds = this._tileCoordsToBounds(coords);
+            const tileMin = tileBounds.getNorthWest();
+            const tileMax = tileBounds.getSouthEast();
+            
+            // Create polygon for Uganda intersection with this tile
+            let polygonPoints = '';
+            ugandaBorder.forEach((point, i) => {
+                const lat = point[0];
+                const lng = point[1];
+                
+                // Check if point is within this tile
+                if (lat <= tileMin.lat && lat >= tileMax.lat && 
+                    lng >= tileMin.lng && lng <= tileMax.lng) {
+                    // Convert to pixel coordinates within tile
+                    const x = ((lng - tileMin.lng) / (tileMax.lng - tileMin.lng)) * tileSize;
+                    const y = ((tileMin.lat - lat) / (tileMin.lat - tileMax.lat)) * tileSize;
+                    polygonPoints += `${x},${y} `;
+                }
+            });
+            
+            if (polygonPoints) {
+                const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                polygon.setAttribute('points', polygonPoints);
+                clipPath.appendChild(polygon);
+                defs.appendChild(clipPath);
+                svg.appendChild(defs);
+                
+                // Apply clip path to image
+                img.style.clipPath = `url(#uganda-clip-${coords.x}-${coords.y}-${coords.z})`;
+                
+                tile.appendChild(img);
+                tile.appendChild(svg);
+            } else {
+                // No Uganda in this tile - show blank
+                tile.style.backgroundColor = 'transparent';
+            }
+            
+            if (done) done(null, tile);
+            return tile;
+        }
+    });
+    
+    return new MaskedTileLayer(url, options);
 }
 
