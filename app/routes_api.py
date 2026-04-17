@@ -825,23 +825,44 @@ def get_cost_surface_image(project_id):
     else:
         normalized = np.zeros_like(cost_surface, dtype=np.uint8)
     
-    # Create color heatmap: green (low cost) -> yellow -> red (high cost)
+    # Create color heatmap with transparency for better overlay
+    # Using a more visible color scheme: blue (low) -> green -> yellow -> red (high)
     height, width = normalized.shape
-    rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
+    rgba_image = np.zeros((height, width, 4), dtype=np.uint8)
     
-    # Green to Red gradient
+    # Create a more distinct color gradient
     for i in range(height):
         for j in range(width):
             val = normalized[i, j]
-            if val < 128:
+            # Normalize to 0-1
+            t = val / 255.0
+            
+            # Color gradient: Blue (low cost) -> Cyan -> Green -> Yellow -> Red (high cost)
+            if t < 0.25:
+                # Blue to Cyan
+                r = 0
+                g = int(255 * (t / 0.25))
+                b = 255
+            elif t < 0.5:
+                # Cyan to Green
+                r = 0
+                g = 255
+                b = int(255 * (1 - (t - 0.25) / 0.25))
+            elif t < 0.75:
                 # Green to Yellow
-                rgb_image[i, j] = [int(val * 2), 255, 0]
+                r = int(255 * ((t - 0.5) / 0.25))
+                g = 255
+                b = 0
             else:
                 # Yellow to Red
-                rgb_image[i, j] = [255, int((255 - val) * 2), 0]
+                r = 255
+                g = int(255 * (1 - (t - 0.75) / 0.25))
+                b = 0
+            
+            rgba_image[i, j] = [r, g, b, 180]  # Add alpha for transparency
     
-    # Create PIL Image
-    img = Image.fromarray(rgb_image)
+    # Create PIL Image with transparency
+    img = Image.fromarray(rgba_image, 'RGBA')
     
     # Save to bytes
     img_io = io.BytesIO()

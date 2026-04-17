@@ -29,15 +29,37 @@ let currentWaypointId = null; // ID of waypoint being placed
  * Initialize the map
  */
 function initMap() {
-    // Create map centered on Uganda (between Olwiyo and border)
-    map = L.map('map').setView([3.4833, 32.3417], 10);
-    // Default basemap is added by static/js/layers.js (Standard OSM) so style matches sidebar toggles
+    // Create map centered on Uganda (Kampala area)
+    map = L.map('map').setView([1.3733, 32.2903], 8);
     
-    // Add satellite imagery option
+    // Uganda-optimized basemaps
+    const openStreetMap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19
+    });
+    
+    // CartoDB Positron - clean, light style good for overlays
+    const cartoPositron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+        subdomains: 'abcd',
+        maxZoom: 20
+    });
+    
+    // CartoDB Dark Matter - dark style for contrast
+    const cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+        subdomains: 'abcd',
+        maxZoom: 20
+    });
+    
+    // Satellite imagery
     const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Tiles © Esri',
+        attribution: 'Tiles &copy; Esri',
         maxZoom: 18
     });
+    
+    // Add default basemap (Carto Positron - good for seeing overlays)
+    cartoPositron.addTo(map);
     
     // GIS overlay layers (NOT added by default - user must select)
     const overlayLayers = {
@@ -53,7 +75,9 @@ function initMap() {
 
     // Layer control with base maps and overlays
     const baseMaps = {
-        "🗺️ Street Map": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
+        "🗺️ Light (Carto)": cartoPositron,
+        "🗺️ Street (OSM)": openStreetMap,
+        "🌙 Dark (Carto)": cartoDark,
         "🛰️ Satellite": satellite
     };
 

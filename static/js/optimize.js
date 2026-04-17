@@ -1087,14 +1087,17 @@ async function viewCostSurface() {
             map.removeLayer(window.costSurfaceLayer);
         }
         
-        // Add cost surface as image overlay
+        // Add cost surface as image overlay with better opacity
         window.costSurfaceLayer = L.imageOverlay(imageUrl, [
             [bounds.min_lat, bounds.min_lon],
             [bounds.max_lat, bounds.max_lon]
         ], {
-            opacity: 0.6,
+            opacity: 0.85,
             interactive: false
         }).addTo(map);
+        
+        // Bring to front so it's visible
+        window.costSurfaceLayer.bringToFront();
         
         // Add to layer control
         if (window.layerControl) {
@@ -1107,7 +1110,7 @@ async function viewCostSurface() {
             [bounds.max_lat, bounds.max_lon]
         ]);
         
-        alert('Cost surface displayed!\n\n🟢 Green = Low cost (preferred)\n🟡 Yellow = Medium cost\n🔴 Red = High cost (avoid)');
+        alert('Cost surface displayed!\n\n🔵 Blue = Low cost (preferred)\n🟢 Green = Low-Medium cost\n🟡 Yellow = Medium cost\n🔴 Red = High cost (avoid)');
         
     } catch (error) {
         console.error('Cost surface error:', error);
