@@ -124,48 +124,43 @@
                 </div>
 
                 <div class="sidebar-section">
-                    <h3>AHP Weights</h3>
+                    <h3>AHP Weights (Cost Surface Layers)</h3>
                     <p class="help-text">Adjust weights for cost factors (must sum to 1.0)<br>
-                    <small>Based on Table 4-12, Page 90 of Report</small></p>
+                    <small>Weights applied to generate cost surface</small></p>
 
                     <div class="weight-control">
-                        <label>Settlements (People): <span id="settlementsValue">0.20</span></label>
-                        <input type="range" id="settlementsWeight" min="0" max="1" step="0.01" value="0.20">
+                        <label>Protected Areas: <span id="protectedValue">0.15</span></label>
+                        <input type="range" id="protectedWeight" min="0" max="1" step="0.01" value="0.15">
                     </div>
 
                     <div class="weight-control">
-                        <label>Protected Areas (Habitat+Fauna): <span id="protectedValue">0.289</span></label>
-                        <input type="range" id="protectedWeight" min="0" max="1" step="0.01" value="0.289">
+                        <label>Rivers: <span id="riversValue">0.15</span></label>
+                        <input type="range" id="riversWeight" min="0" max="1" step="0.01" value="0.15">
                     </div>
 
                     <div class="weight-control">
-                        <label>Vegetation (Forests): <span id="vegetationValue">0.156</span></label>
-                        <input type="range" id="vegetationWeight" min="0" max="1" step="0.01" value="0.156">
+                        <label>Wetlands: <span id="wetlandsValue">0.15</span></label>
+                        <input type="range" id="wetlandsWeight" min="0" max="1" step="0.01" value="0.15">
                     </div>
 
                     <div class="weight-control">
-                        <label>Land Use (Agriculture): <span id="landUseValue">0.133</span></label>
-                        <input type="range" id="landUseWeight" min="0" max="1" step="0.01" value="0.133">
+                        <label>Roads: <span id="roadsValue">0.10</span></label>
+                        <input type="range" id="roadsWeight" min="0" max="1" step="0.01" value="0.10">
                     </div>
 
                     <div class="weight-control">
-                        <label>Water (Wetlands/Rivers): <span id="waterValue">0.089</span></label>
-                        <input type="range" id="waterWeight" min="0" max="1" step="0.01" value="0.089">
+                        <label>Elevation: <span id="elevationValue">0.15</span></label>
+                        <input type="range" id="elevationWeight" min="0" max="1" step="0.01" value="0.15">
                     </div>
 
                     <div class="weight-control">
-                        <label>Topography (Landscape): <span id="topoValue">0.067</span></label>
-                        <input type="range" id="topoWeight" min="0" max="1" step="0.01" value="0.067">
+                        <label>Lakes: <span id="lakesValue">0.15</span></label>
+                        <input type="range" id="lakesWeight" min="0" max="1" step="0.01" value="0.15">
                     </div>
 
                     <div class="weight-control">
-                        <label>Cultural Heritage: <span id="culturalValue">0.044</span></label>
-                        <input type="range" id="culturalWeight" min="0" max="1" step="0.01" value="0.044">
-                    </div>
-
-                    <div class="weight-control">
-                        <label>Public Infrastructure: <span id="publicInfraValue">0.022</span></label>
-                        <input type="range" id="publicInfraWeight" min="0" max="1" step="0.01" value="0.022">
+                        <label>Settlements (Schools): <span id="settlementsValue">0.15</span></label>
+                        <input type="range" id="settlementsWeight" min="0" max="1" step="0.01" value="0.15">
                     </div>
 
                     <div class="weight-sum">Total: <span id="weightSum">1.00</span></div>

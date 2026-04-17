@@ -2,16 +2,15 @@
  * Route optimization logic and API interactions
  */
 
-// AHP weights state (from Table 4-12, Page 90 of Report)
+// AHP weights state - matching cost surface layers
 let ahpWeights = {
-    settlements: 0.20,           // PEOPLE (20.0%)
-    protected_areas: 0.289,      // HABITAT (17.8%) + FAUNA (11.1%)
-    vegetation: 0.156,           // VEGETATION (15.6%)
-    land_use: 0.133,             // LAND (13.3%)
-    water: 0.089,                // WATER (8.9%)
-    topography: 0.067,           // LANDSCAPE (6.7%)
-    cultural_heritage: 0.044,    // PHYSICAL CULTURAL HERITAGE (4.4%)
-    public_infrastructure: 0.022 // PUBLIC INFRASTRUCTURES (2.2%)
+    protected_areas: 0.15,   // Protected Areas
+    rivers: 0.15,            // Rivers
+    wetlands: 0.15,          // Wetlands
+    roads: 0.10,             // Roads
+    elevation: 0.15,         // Elevation
+    lakes: 0.15,             // Lakes
+    settlements: 0.15        // Settlements (Schools)
 };
 
 // Waypoints array
@@ -62,25 +61,23 @@ document.addEventListener('DOMContentLoaded', function() {
  */
 function setupWeightSliders() {
     const sliders = {
-        settlements: document.getElementById('settlementsWeight'),
         protected_areas: document.getElementById('protectedWeight'),
-        vegetation: document.getElementById('vegetationWeight'),
-        land_use: document.getElementById('landUseWeight'),
-        water: document.getElementById('waterWeight'),
-        topography: document.getElementById('topoWeight'),
-        cultural_heritage: document.getElementById('culturalWeight'),
-        public_infrastructure: document.getElementById('publicInfraWeight')
+        rivers: document.getElementById('riversWeight'),
+        wetlands: document.getElementById('wetlandsWeight'),
+        roads: document.getElementById('roadsWeight'),
+        elevation: document.getElementById('elevationWeight'),
+        lakes: document.getElementById('lakesWeight'),
+        settlements: document.getElementById('settlementsWeight')
     };
 
     const values = {
-        settlements: document.getElementById('settlementsValue'),
         protected_areas: document.getElementById('protectedValue'),
-        vegetation: document.getElementById('vegetationValue'),
-        land_use: document.getElementById('landUseValue'),
-        water: document.getElementById('waterValue'),
-        topography: document.getElementById('topoValue'),
-        cultural_heritage: document.getElementById('culturalValue'),
-        public_infrastructure: document.getElementById('publicInfraValue')
+        rivers: document.getElementById('riversValue'),
+        wetlands: document.getElementById('wetlandsValue'),
+        roads: document.getElementById('roadsValue'),
+        elevation: document.getElementById('elevationValue'),
+        lakes: document.getElementById('lakesValue'),
+        settlements: document.getElementById('settlementsValue')
     };
 
     // Update weights when sliders change
