@@ -107,14 +107,14 @@ function initMap() {
 }
 
 /**
- * Load Uganda boundary from ug.json as the basemap
+ * Load Uganda boundary from uganda_country_boundary.json as the basemap
  */
 async function loadUgandaBasemap() {
     try {
-        // Load ug.json (Uganda boundary)
-        const response = await fetch('/data/uganda_boundary.json');
+        // Load uganda_country_boundary.json (single Uganda country boundary)
+        const response = await fetch('/data/uganda_country_boundary.json');
         if (!response.ok) {
-            console.warn('Could not load uganda_boundary.json, using fallback');
+            console.warn('Could not load uganda_country_boundary.json, using fallback');
             addUgandaFallbackBoundary();
             return;
         }
@@ -125,24 +125,28 @@ async function loadUgandaBasemap() {
         ugandaBoundaryLayer = L.geoJSON(ugandaGeoJSON, {
             style: {
                 color: '#228B22',        // Forest green border
-                weight: 2,
+                weight: 3,
                 opacity: 1.0,
                 fillColor: '#90EE90',    // Light green fill
-                fillOpacity: 0.3         // Semi-transparent
+                fillOpacity: 0.4         // Semi-transparent
             }
         }).addTo(map);
         
-        // Add country label
-        L.marker([1.3733, 32.2903], {
+        // Fit map to Uganda bounds
+        map.fitBounds(ugandaBoundaryLayer.getBounds());
+        
+        // Add country label at center
+        const center = ugandaBoundaryLayer.getBounds().getCenter();
+        L.marker([center.lat, center.lng], {
             icon: L.divIcon({
                 className: 'uganda-label',
-                html: '<div style="font-size: 28px; font-weight: bold; color: #006400; text-shadow: 2px 2px 4px white;">🇺🇬 UGANDA</div>',
-                iconSize: [200, 50],
-                iconAnchor: [100, 25]
+                html: '<div style="font-size: 32px; font-weight: bold; color: #006400; text-shadow: 2px 2px 4px white;">🇺🇬 UGANDA</div>',
+                iconSize: [250, 60],
+                iconAnchor: [125, 30]
             })
         }).addTo(map);
         
-        console.log('✓ Uganda basemap loaded from ug.json');
+        console.log('✓ Uganda country basemap loaded');
         
     } catch (error) {
         console.error('Error loading Uganda basemap:', error);
@@ -151,30 +155,50 @@ async function loadUgandaBasemap() {
 }
 
 /**
- * Fallback Uganda boundary if ug.json fails to load
+ * Fallback Uganda boundary if JSON fails to load
+ * Based on actual Uganda extent: [-1.48, 29.59] to [4.23, 35.00]
  */
 function addUgandaFallbackBoundary() {
-    // Simplified Uganda border coordinates
+    // More accurate Uganda border coordinates (approximate)
     const ugandaBorder = [
-        [4.5, 30.0], [4.5, 30.5], [4.2, 31.0], [3.8, 32.0], [3.5, 33.0],
-        [2.5, 34.0], [1.5, 34.5], [0.5, 34.0], [0.5, 33.5], [0.8, 32.5],
-        [1.0, 31.5], [1.5, 30.5], [2.5, 30.0], [3.5, 29.8], [4.5, 30.0]
+        [4.23, 30.26],      // North (South Sudan border)
+        [3.95, 32.10],      // North-East
+        [3.45, 33.20],      // North-East (Kenya border)
+        [2.30, 34.50],      // East (Kenya border)
+        [1.50, 34.95],      // East
+        [0.35, 34.10],      // South-East (Tanzania border)
+        [-0.05, 33.20],     // South
+        [-0.50, 32.10],     // South-West (Rwanda border)
+        [-0.95, 31.10],     // South-West (Tanzania border)
+        [-1.30, 30.50],     // South-West
+        [-1.48, 30.00],     // West (DRC border)
+        [-1.30, 29.80],     // West
+        [-0.50, 29.60],     // West (DRC border)
+        [0.80, 29.60],      // West
+        [2.30, 29.75],      // West (DRC border)
+        [3.50, 30.00],      // North-West (South Sudan border)
+        [4.23, 30.26]       // Close polygon
     ];
     
     ugandaBoundaryLayer = L.polygon(ugandaBorder, {
         color: '#228B22',
-        weight: 2,
+        weight: 3,
         opacity: 1.0,
         fillColor: '#90EE90',
-        fillOpacity: 0.3
+        fillOpacity: 0.4
     }).addTo(map);
     
-    L.marker([1.3733, 32.2903], {
+    // Fit to bounds
+    map.fitBounds(ugandaBoundaryLayer.getBounds());
+    
+    // Add label at center
+    const center = ugandaBoundaryLayer.getBounds().getCenter();
+    L.marker([center.lat, center.lng], {
         icon: L.divIcon({
             className: 'uganda-label',
-            html: '<div style="font-size: 28px; font-weight: bold; color: #006400; text-shadow: 2px 2px 4px white;">🇺🇬 UGANDA</div>',
-            iconSize: [200, 50],
-            iconAnchor: [100, 25]
+            html: '<div style="font-size: 32px; font-weight: bold; color: #006400; text-shadow: 2px 2px 4px white;">🇺🇬 UGANDA</div>',
+            iconSize: [250, 60],
+            iconAnchor: [125, 30]
         })
     }).addTo(map);
 }
