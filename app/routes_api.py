@@ -825,41 +825,50 @@ def get_cost_surface_image(project_id):
     else:
         normalized = np.zeros_like(cost_surface, dtype=np.uint8)
     
-    # Create color heatmap with transparency for better overlay
-    # Using a more visible color scheme: blue (low) -> green -> yellow -> red (high)
+    # Create color heatmap matching the reference image
+    # Color scale: Green (low) -> Light Green -> Yellow -> Orange -> Red (high)
+    # Based on cost values: 156-220 (green), 220-284 (light green), 284-348 (yellow), 348-412 (orange), 412-476 (red)
     height, width = normalized.shape
     rgba_image = np.zeros((height, width, 4), dtype=np.uint8)
     
-    # Create a more distinct color gradient
+    # Calculate actual cost range for legend
+    cost_range = max_val - min_val
+    
     for i in range(height):
         for j in range(width):
             val = normalized[i, j]
             # Normalize to 0-1
             t = val / 255.0
             
-            # Color gradient: Blue (low cost) -> Cyan -> Green -> Yellow -> Red (high cost)
-            if t < 0.25:
-                # Blue to Cyan
+            # Color gradient matching the image:
+            # Dark Green (low cost) -> Green -> Light Green -> Yellow -> Orange -> Red (high cost)
+            if t < 0.2:
+                # Dark Green to Green (156-220 equivalent)
                 r = 0
-                g = int(255 * (t / 0.25))
-                b = 255
-            elif t < 0.5:
-                # Cyan to Green
-                r = 0
+                g = int(150 + 105 * (t / 0.2))  # 150-255
+                b = 0
+            elif t < 0.4:
+                # Green to Light Green (220-284 equivalent)
+                r = int(144 * ((t - 0.2) / 0.2))  # 0-144
                 g = 255
-                b = int(255 * (1 - (t - 0.25) / 0.25))
-            elif t < 0.75:
-                # Green to Yellow
-                r = int(255 * ((t - 0.5) / 0.25))
+                b = 0
+            elif t < 0.6:
+                # Light Green to Yellow (284-348 equivalent)
+                r = int(144 + 111 * ((t - 0.4) / 0.2))  # 144-255
                 g = 255
+                b = 0
+            elif t < 0.8:
+                # Yellow to Orange (348-412 equivalent)
+                r = 255
+                g = int(255 - 100 * ((t - 0.6) / 0.2))  # 255-155
                 b = 0
             else:
-                # Yellow to Red
+                # Orange to Red (412-476 equivalent)
                 r = 255
-                g = int(255 * (1 - (t - 0.75) / 0.25))
+                g = int(155 - 155 * ((t - 0.8) / 0.2))  # 155-0
                 b = 0
             
-            rgba_image[i, j] = [r, g, b, 180]  # Add alpha for transparency
+            rgba_image[i, j] = [r, g, b, 200]  # Slightly more opaque for better visibility
     
     # Create PIL Image with transparency
     img = Image.fromarray(rgba_image, 'RGBA')
@@ -869,12 +878,19 @@ def get_cost_surface_image(project_id):
     img.save(img_io, 'PNG')
     img_io.seek(0)
     
-    return send_file(
+    # Return with cost scale metadata
+    response = send_file(
         img_io,
         mimetype='image/png',
         as_attachment=False,
         download_name=f'cost_surface_project_{project_id}.png'
     )
+    
+    # Add cost scale headers for frontend legend
+    response.headers['X-Cost-Min'] = str(round(min_val, 2))
+    response.headers['X-Cost-Max'] = str(round(max_val, 2))
+    
+    return response
 
 
 def _create_demo_layers(bounds, config, shape=None):

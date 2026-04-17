@@ -50,17 +50,18 @@ function initMap() {
     // Fit map to Uganda bounds
     map.fitBounds(ugandaBounds);
     
-    // GIS overlay layers from SHAPEFILES only (NO OpenStreetMap data)
+    // GIS overlay layers from YOUR SHAPEFILES only (NO OpenStreetMap data)
     const overlayLayers = {
-        "🏔️ Elevation (DEM)": createDEMLayer(),
-        "🏘️ Settlements (Schools)": createSettlementsLayer(),
-        "🛣️ Roads": createRoadsLayer(),
-        "💧 Rivers": createRiversLayer(),
-        "🌊 Wetlands": createWetlandsLayer(),
+        "🏔️ Elevation (Contours)": createDEMLayer(),
+        "🏫 Schools": createSchoolsLayer(),
+        "🛣️ Roads (UNRA 2012)": createRoadsLayer(),
+        "🌊 Rivers": createRiversLayer(),
+        "🌊 Wetlands (1994)": createWetlandsLayer(),
         "🌊 Lakes": createLakesLayer(),
         "🦁 Protected Areas": createProtectedAreasLayer(),
-        "🏥 Hospitals": createHospitalsLayer(),
-        "🏢 Commercial Areas": createCommercialLayer()
+        "🏥 Health Facilities": createHealthFacilitiesLayer(),
+        "🏢 Commercial Facilities": createCommercialLayer(),
+        "🏘️ Trading Centres": createTradingCentresLayer()
     };
 
     // Layer control - overlays only, Uganda base is always visible
@@ -384,6 +385,57 @@ function createPowerInfraLayer() {
             dashArray: '5, 5',
             opacity: 0.7
         }, 'Power Infrastructure');
+    });
+    return layer;
+}
+
+/**
+ * Create layer for Schools (from Ug_Schools shapefile)
+ */
+function createSchoolsLayer() {
+    const layer = L.layerGroup();
+    layer.on('add', function() {
+        loadGISLayer('schools', layer, {
+            radius: 5,
+            fillColor: '#4169E1',
+            color: '#000080',
+            weight: 1,
+            fillOpacity: 0.8
+        }, 'School');
+    });
+    return layer;
+}
+
+/**
+ * Create layer for Health Facilities (from health_facilities shapefile)
+ */
+function createHealthFacilitiesLayer() {
+    const layer = L.layerGroup();
+    layer.on('add', function() {
+        loadGISLayer('health_facilities', layer, {
+            radius: 6,
+            fillColor: '#FF0000',
+            color: '#8B0000',
+            weight: 1,
+            fillOpacity: 0.8
+        }, 'Health Facility');
+    });
+    return layer;
+}
+
+/**
+ * Create layer for Trading Centres (from Ug_Trading_Centres shapefile)
+ */
+function createTradingCentresLayer() {
+    const layer = L.layerGroup();
+    layer.on('add', function() {
+        loadGISLayer('trading_centres', layer, {
+            radius: 4,
+            fillColor: '#FF8C00',
+            color: '#8B4500',
+            weight: 1,
+            fillOpacity: 0.7
+        }, 'Trading Centre');
     });
     return layer;
 }
