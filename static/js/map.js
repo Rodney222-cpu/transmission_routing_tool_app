@@ -111,10 +111,10 @@ function initMap() {
  */
 async function loadUgandaBasemap() {
     try {
-        // Load uganda_country_boundary.json (single Uganda country boundary)
-        const response = await fetch('/data/uganda_country_boundary.json');
+        // Load uganda_boundary_final.json (proper Uganda country boundary from shapefile)
+        const response = await fetch('/data/uganda_boundary_final.json');
         if (!response.ok) {
-            console.warn('Could not load uganda_country_boundary.json, using fallback');
+            console.warn('Could not load uganda_boundary_final.json, using fallback');
             addUgandaFallbackBoundary();
             return;
         }
