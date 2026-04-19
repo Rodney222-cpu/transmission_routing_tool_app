@@ -454,23 +454,24 @@ function populateLayerTree() {
     document.querySelectorAll('.layer-tree-item input').forEach(checkbox => {
         checkbox.addEventListener('change', function() {
             const layerId = this.dataset.layer;
-            toggleLayer(layerId, this.checked);
+            // Use the main toggleLayer function from layer_manager.js
+            if (typeof toggleLayer === 'function') {
+                toggleLayer(layerId, this.checked);
+            } else {
+                console.warn('toggleLayer function not found - layer_manager.js may not be loaded');
+            }
         });
     });
 }
 
 /**
- * Toggle layer visibility
+ * Toggle layer visibility (deprecated - use layer_manager.js instead)
+ * This function is kept for backward compatibility but does nothing
+ * as the actual layer toggling is handled by layer_manager.js
  */
-function toggleLayer(layerId, visible) {
-    // This would integrate with the existing Leaflet layer control
-    // For now, we'll just log the action
-    console.log(`Layer ${layerId} ${visible ? 'enabled' : 'disabled'}`);
-    
-    // In a full implementation, this would:
-    // 1. Find the corresponding Leaflet layer
-    // 2. Add or remove it from the map
-    // 3. Update the layer state
+function toggleLayerQGIS(layerId, visible) {
+    // This function is deprecated - layer_manager.js handles all layer toggling
+    console.log(`[DEPRECATED] Layer ${layerId} ${visible ? 'enabled' : 'disabled'} - use toggleLayer() from layer_manager.js`);
 }
 
 /**

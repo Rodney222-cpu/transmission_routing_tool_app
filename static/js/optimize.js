@@ -2,16 +2,16 @@
  * Route optimization logic and API interactions
  */
 
-// AHP weights state - matching cost surface layers
+// AHP weights state - matching cost surface layers (MUST sum to 1.0)
 let ahpWeights = {
     protected_areas: 0.15,   // Protected Areas
     rivers: 0.15,            // Rivers
-    wetlands: 0.15,          // Wetlands
+    wetlands: 0.10,          // Wetlands
     roads: 0.10,             // Roads
     elevation: 0.15,         // Elevation
-    lakes: 0.15,             // Lakes
+    lakes: 0.10,             // Lakes
     settlements: 0.15,       // Settlements (Schools)
-    land_use: 0.15           // Land Use
+    land_use: 0.10           // Land Use
 };
 
 // Waypoints array
@@ -42,6 +42,32 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Generate towers button
     document.getElementById('generateTowersBtn')?.addEventListener('click', generateTowers);
+    
+    // Generate Cost Surface button
+    document.getElementById('generateCostSurfaceBtn')?.addEventListener('click', generateCostSurface);
+    
+    // Auto-update cost surface when weights change (with debounce)
+    let costSurfaceUpdateTimeout;
+    Object.keys(ahpWeights).forEach(key => {
+        const sliderId = key + 'Weight';
+        const slider = document.getElementById(sliderId);
+        if (slider) {
+            slider.addEventListener('input', function() {
+                // Clear previous timeout
+                if (costSurfaceUpdateTimeout) {
+                    clearTimeout(costSurfaceUpdateTimeout);
+                }
+                
+                // Update cost surface after 1 second delay (debounce)
+                costSurfaceUpdateTimeout = setTimeout(() => {
+                    if (document.getElementById('costSurfaceLegend').style.display === 'block') {
+                        // Only auto-update if cost surface is already visible
+                        generateCostSurface();
+                    }
+                }, 1000);
+            });
+        }
+    });
 
     // Export buttons
     document.getElementById('exportBtn')?.addEventListener('click', () => exportRoute('geojson'));
@@ -1118,6 +1144,159 @@ async function viewCostSurface() {
     } finally {
         const btn = document.getElementById('viewCostSurfaceBtn');
         btn.textContent = 'View Cost Surface';
+        btn.disabled = false;
+    }
+}
+
+/**
+ * Generate cost surface with current weights (without route optimization)
+ */
+async function generateCostSurface() {
+    try {
+        // Show loading
+        const btn = document.getElementById('generateCostSurfaceBtn');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '⏳ Generating Cost Surface...';
+        btn.disabled = true;
+        
+        console.log('🎨 Generating cost surface with user-selected layers and weights...');
+        
+        // Get current map bounds
+        const bounds = map.getBounds();
+        const min_lon = bounds.getWest();
+        const min_lat = bounds.getSouth();
+        const max_lon = bounds.getEast();
+        const max_lat = bounds.getNorth();
+        
+        const boundsArray = [min_lon, min_lat, max_lon, max_lat];
+        
+        // Build layers configuration from checkboxes and sliders
+        const layersConfig = {
+            protected_areas: {
+                enabled: document.getElementById('showProtectedAreas')?.checked || false,
+                weight: ahpWeights.protected_areas || 0
+            },
+            rivers: {
+                enabled: document.getElementById('showRivers')?.checked || false,
+                weight: ahpWeights.rivers || 0
+            },
+            wetlands: {
+                enabled: document.getElementById('showWetlands')?.checked || false,
+                weight: ahpWeights.wetlands || 0
+            },
+            roads: {
+                enabled: document.getElementById('showRoads')?.checked || false,
+                weight: ahpWeights.roads || 0
+            },
+            elevation: {
+                enabled: document.getElementById('showElevation')?.checked || false,
+                weight: ahpWeights.elevation || 0
+            },
+            lakes: {
+                enabled: document.getElementById('showLakes')?.checked || false,
+                weight: ahpWeights.lakes || 0
+            },
+            settlements: {
+                enabled: document.getElementById('showSettlements')?.checked || false,
+                weight: ahpWeights.settlements || 0
+            },
+            land_use: {
+                enabled: document.getElementById('showLandUse')?.checked || false,
+                weight: ahpWeights.land_use || 0
+            }
+        };
+        
+        // Count enabled layers
+        const enabledCount = Object.values(layersConfig).filter(l => l.enabled).length;
+        console.log(`📊 Enabled layers: ${enabledCount}/8`);
+        console.log('📋 Layers config:', layersConfig);
+        
+        if (enabledCount === 0) {
+            alert('Please check at least one layer checkbox to generate the cost surface.');
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            return;
+        }
+        
+        // Call API to generate cost surface
+        const response = await fetch('/api/cost-surface/generate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                layers: layersConfig,
+                bounds: boundsArray,
+                resolution_m: 100  // Use 100m resolution for faster visualization
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to generate cost surface');
+        }
+        
+        const result = await response.json();
+        
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to generate cost surface');
+        }
+        
+        console.log('✅ Cost surface generated successfully:', result.metadata);
+        
+        // Remove existing cost surface layer if any
+        if (window.costSurfacePreviewLayer) {
+            map.removeLayer(window.costSurfacePreviewLayer);
+        }
+        
+        // Create image from base64
+        const imageUrl = `data:image/png;base64,${result.image_base64}`;
+        
+        // Add cost surface as image overlay
+        const metadata = result.metadata;
+        const imgBounds = [
+            [result.bounds[1], result.bounds[0]],  // SW: [min_lat, min_lon]
+            [result.bounds[3], result.bounds[2]]   // NE: [max_lat, max_lon]
+        ];
+        
+        window.costSurfacePreviewLayer = L.imageOverlay(imageUrl, imgBounds, {
+            opacity: 0.7,
+            interactive: false
+        }).addTo(map);
+        
+        // Show legend
+        const legend = document.getElementById('costSurfaceLegend');
+        legend.style.display = 'block';
+        
+        // Update info text
+        const infoText = document.getElementById('costSurfaceInfo');
+        const enabledLayersList = Object.entries(layersConfig)
+            .filter(([_, config]) => config.enabled)
+            .map(([name, _]) => name)
+            .join(', ');
+        
+        infoText.innerHTML = `
+            <strong>Cost Surface Statistics:</strong><br>
+            Min: ${metadata.min_cost.toFixed(2)} | 
+            Max: ${metadata.max_cost.toFixed(2)} | 
+            Mean: ${metadata.mean_cost.toFixed(2)}<br>
+            <strong>Enabled Layers (${enabledCount}):</strong> ${enabledLayersList}<br>
+            Resolution: ${metadata.resolution_m}m | 
+            Data: ${metadata.data_source} | 
+            Time: ${metadata.generation_time_s}s
+        `;
+        
+        // Fit map to cost surface bounds
+        map.fitBounds(imgBounds);
+        
+        console.log('✅ Cost surface displayed on map');
+        
+    } catch (error) {
+        console.error('❌ Cost surface generation error:', error);
+        alert('Error generating cost surface: ' + error.message);
+    } finally {
+        const btn = document.getElementById('generateCostSurfaceBtn');
+        btn.innerHTML = '🎨 Generate Cost Surface / Suitability Map';
         btn.disabled = false;
     }
 }

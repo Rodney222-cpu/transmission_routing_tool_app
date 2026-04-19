@@ -132,8 +132,8 @@
                     </div>
 
                     <div class="weight-control">
-                        <label>Wetlands: <span id="wetlandsValue">0.15</span></label>
-                        <input type="range" id="wetlandsWeight" min="0" max="1" step="0.01" value="0.15">
+                        <label>Wetlands: <span id="wetlandsValue">0.10</span></label>
+                        <input type="range" id="wetlandsWeight" min="0" max="1" step="0.01" value="0.10">
                     </div>
 
                     <div class="weight-control">
@@ -147,8 +147,8 @@
                     </div>
 
                     <div class="weight-control">
-                        <label>Lakes: <span id="lakesValue">0.15</span></label>
-                        <input type="range" id="lakesWeight" min="0" max="1" step="0.01" value="0.15">
+                        <label>Lakes: <span id="lakesValue">0.10</span></label>
+                        <input type="range" id="lakesWeight" min="0" max="1" step="0.01" value="0.10">
                     </div>
 
                     <div class="weight-control">
@@ -157,8 +157,44 @@
                     </div>
 
                     <div class="weight-control">
-                        <label>Land Use: <span id="landUseValue">0.15</span></label>
-                        <input type="range" id="landUseWeight" min="0" max="1" step="0.01" value="0.15">
+                        <label>Land Use: <span id="landUseValue">0.10</span></label>
+                        <input type="range" id="landUseWeight" min="0" max="1" step="0.01" value="0.10">
+                    </div>
+
+                    <div style="margin-top: 15px;">
+                        <button id="generateCostSurfaceBtn" class="btn btn-primary" style="width: 100%; padding: 10px; font-size: 13px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: 600;">
+                            🎨 Generate Cost Surface / Suitability Map
+                        </button>
+                        <p class="help-text" style="margin-top: 8px; font-size: 10px; text-align: center;">
+                            Click to generate cost surface with current weights
+                        </p>
+                    </div>
+
+                    <div id="costSurfaceLegend" style="margin-top: 15px; padding: 10px; background: #f9f9f9; border-radius: 5px; display: none;">
+                        <p style="font-size: 11px; font-weight: 600; margin-bottom: 8px;">📊 Cost Surface Legend</p>
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div style="width: 20px; height: 20px; background: rgb(34, 139, 34); border: 1px solid #333;"></div>
+                                <span style="font-size: 10px;">Very Low Cost (156-220)</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div style="width: 20px; height: 20px; background: rgb(144, 238, 144); border: 1px solid #333;"></div>
+                                <span style="font-size: 10px;">Low Cost (220-284)</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div style="width: 20px; height: 20px; background: rgb(255, 255, 0); border: 1px solid #333;"></div>
+                                <span style="font-size: 10px;">Moderate Cost (284-348)</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div style="width: 20px; height: 20px; background: rgb(255, 165, 0); border: 1px solid #333;"></div>
+                                <span style="font-size: 10px;">High Cost (348-412)</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div style="width: 20px; height: 20px; background: rgb(255, 0, 0); border: 1px solid #333;"></div>
+                                <span style="font-size: 10px;">Very High Cost (412-476)</span>
+                            </div>
+                        </div>
+                        <p id="costSurfaceInfo" style="margin-top: 8px; font-size: 9px; color: #666;"></p>
                     </div>
 
                     <div class="weight-sum">Total: <span id="weightSum">1.00</span></div>

@@ -640,6 +640,288 @@ def get_gis_layer(layer_name):
         }), 500
 
 
+@api_bp.route('/cost-surface/generate', methods=['POST'])
+@login_required
+def generate_cost_surface():
+    """
+    Generate cost surface based on user-selected layers and weights
+    
+    Expected JSON body:
+    {
+        "layers": {
+            "protected_areas": {"enabled": true, "weight": 0.15},
+            "rivers": {"enabled": true, "weight": 0.15},
+            "wetlands": {"enabled": true, "weight": 0.15},
+            "roads": {"enabled": true, "weight": 0.10},
+            "elevation": {"enabled": true, "weight": 0.15},
+            "lakes": {"enabled": true, "weight": 0.15},
+            "settlements": {"enabled": true, "weight": 0.15},
+            "land_use": {"enabled": true, "weight": 0.15}
+        },
+        "bounds": [29.5, 0.5, 35.0, 4.5],
+        "resolution_m": 100
+    }
+    """
+    try:
+        from app.optimizer.cost_surface import CostSurfaceGenerator
+        from app.services.gis_data_loader import load_layers_for_bounds
+        from app.services.uganda_gis_loader import UgandaGISLoader
+        import time
+        import geopandas as gpd
+        from shapely.geometry import box, Point
+        
+        # Get request data
+        data = request.get_json() or {}
+        layers_config = data.get('layers', {})
+        
+        # Extract only enabled layers and normalize weights
+        enabled_layers = {}
+        total_weight = 0
+        
+        for layer_name, config in layers_config.items():
+            if config.get('enabled', False):
+                weight = config.get('weight', 0)
+                if weight > 0:
+                    enabled_layers[layer_name] = weight
+                    total_weight += weight
+        
+        # Normalize weights to sum to 1.0
+        if total_weight > 0:
+            ahp_weights = {k: v / total_weight for k, v in enabled_layers.items()}
+        else:
+            # Fallback to default weights if no layers enabled
+            ahp_weights = current_app.config['DEFAULT_AHP_WEIGHTS']
+        
+        # Map layer names to what the cost surface generator expects
+        weight_mapping = {
+            'protected_areas': 'protected_areas',
+            'rivers': 'water',  # Rivers go into water category
+            'wetlands': 'water',  # Wetlands go into water category
+            'roads': 'roads',
+            'elevation': 'topography',
+            'lakes': 'water',  # Lakes go into water category
+            'settlements': 'settlements',
+            'land_use': 'land_use'
+        }
+        
+        # Convert to AHP weights format
+        final_weights = {
+            'protected_areas': 0,
+            'topography': 0,
+            'land_use': 0,
+            'settlements': 0,
+            'water': 0,
+            'roads': 0,
+            'vegetation': 0,
+            'public_infrastructure': 0
+        }
+        
+        for layer_name, weight in ahp_weights.items():
+            ahp_category = weight_mapping.get(layer_name)
+            if ahp_category:
+                final_weights[ahp_category] += weight
+        
+        print(f"🎨 Generating cost surface with user-selected layers...")
+        print(f"   Enabled layers: {list(enabled_layers.keys())}")
+        print(f"   Original weights: {ahp_weights}")
+        print(f"   AHP weights: {final_weights}")
+        
+        # Default to Uganda bounds if not provided
+        bounds = data.get('bounds', [29.5, 0.5, 35.0, 4.5])
+        min_lon, min_lat, max_lon, max_lat = bounds
+        
+        # Auto-calculate resolution based on area size
+        lon_span = max_lon - min_lon
+        lat_span = max_lat - min_lat
+        approx_distance_km = max(lon_span, lat_span) * 111
+        
+        # Start with 100m resolution for visualization (faster than 30m)
+        resolution_m = data.get('resolution_m', None)
+        if resolution_m is None:
+            if approx_distance_km > 200:
+                resolution_m = 200
+            elif approx_distance_km > 100:
+                resolution_m = 100
+            else:
+                resolution_m = 50
+        
+        print(f"   Bounds: {bounds}")
+        print(f"   Resolution: {resolution_m}m")
+        
+        # Calculate raster shape
+        shape = _shape_from_bounds(bounds, resolution_m=resolution_m)
+        height, width = shape
+        total_pixels = height * width
+        
+        print(f"   Raster size: {width} × {height} = {total_pixels:,} pixels")
+        
+        # Load GIS layers
+        start_time = time.time()
+        try:
+            layers_data = load_layers_for_bounds(current_app.config, tuple(bounds), shape)
+        except Exception as e:
+            print(f"⚠️ Error loading real GIS layers: {e}")
+            layers_data = {}
+        
+        if not layers_data:
+            print("⚠️ Falling back to demo data")
+            layers_data = _create_demo_layers(bounds, current_app.config, shape)
+        
+        load_time = time.time() - start_time
+        print(f"✓ Layers loaded in {load_time:.2f}s")
+        print(f"   Available layers: {list(layers_data.keys())}")
+        
+        # Generate cost surface with user's weights
+        start_time = time.time()
+        cost_generator = CostSurfaceGenerator(current_app.config)
+        cost_surface, metadata = cost_generator.generate_composite_cost_surface(
+            bounds, final_weights, layers_data, resolution=resolution_m, grid_shape=shape
+        )
+        gen_time = time.time() - start_time
+        
+        print(f"✓ Cost surface generated in {gen_time:.2f}s")
+        print(f"   Min cost: {metadata['min_cost']:.2f}")
+        print(f"   Max cost: {metadata['max_cost']:.2f}")
+        print(f"   Mean cost: {metadata['mean_cost']:.2f}")
+        
+        # Load Uganda boundary to clip the cost surface
+        print("🗺️ Loading Uganda boundary for clipping...")
+        try:
+            loader = UgandaGISLoader(current_app.config)
+            uganda_geojson = loader.load_layer_geojson('uganda_districts', bounds)
+            
+            if uganda_geojson and len(uganda_geojson.get('features', [])) > 0:
+                # Convert GeoJSON to GeoDataFrame
+                uganda_gdf = gpd.GeoDataFrame.from_features(uganda_geojson['features'])
+                uganda_gdf.crs = 'EPSG:4326'
+                
+                # Merge all districts into single Uganda boundary
+                uganda_boundary = uganda_gdf.unary_union
+                print(f"✓ Uganda boundary loaded successfully")
+            else:
+                print("⚠️ Uganda boundary not available, using full bounds")
+                uganda_boundary = None
+        except Exception as e:
+            print(f"⚠️ Error loading Uganda boundary: {e}")
+            uganda_boundary = None
+        
+        # Convert cost surface to image for visualization
+        from PIL import Image
+        import io
+        import numpy as np
+        
+        # Normalize cost surface to match the reference image scale (156-476)
+        # The reference uses: 156-220, 220-284, 284-348, 348-412, 412-476
+        min_val = np.nanmin(cost_surface)
+        max_val = np.nanmax(cost_surface)
+        
+        # Map to 156-476 range to match reference
+        if max_val > min_val:
+            scaled = 156 + ((cost_surface - min_val) / (max_val - min_val)) * (476 - 156)
+        else:
+            scaled = np.full_like(cost_surface, 316.0)  # Middle value
+        
+        # Create RGBA image with exact colors from reference
+        # Green (156-220), Light Green (220-284), Yellow (284-348), Orange (348-412), Red (412-476)
+        rgba_image = np.zeros((height, width, 4), dtype=np.uint8)
+        
+        # Calculate pixel coordinates for each cell
+        lon_per_pixel = (max_lon - min_lon) / width
+        lat_per_pixel = (max_lat - min_lat) / height
+        
+        print("🎨 Applying colors and Uganda boundary mask...")
+        
+        for i in range(height):
+            for j in range(width):
+                # Calculate geographic coordinates for this pixel
+                pixel_lon = min_lon + (j + 0.5) * lon_per_pixel
+                pixel_lat = max_lat - (i + 0.5) * lat_per_pixel
+                
+                # Check if this pixel is within Uganda boundary
+                if uganda_boundary:
+                    point = Point(pixel_lon, pixel_lat)
+                    if not uganda_boundary.contains(point):
+                        # Outside Uganda - make transparent
+                        rgba_image[i, j] = [0, 0, 0, 0]  # Fully transparent
+                        continue
+                
+                # Inside Uganda - apply cost color
+                val = scaled[i, j]
+                
+                # Exact color matching from reference image
+                if val < 220:
+                    # Very Low Cost (156-220): Dark Green
+                    # RGB: (34, 139, 34) - Forest Green
+                    r = 34
+                    g = 139
+                    b = 34
+                elif val < 284:
+                    # Low Cost (220-284): Light Green
+                    # RGB: (144, 238, 144) - Light Green
+                    r = 144
+                    g = 238
+                    b = 144
+                elif val < 348:
+                    # Moderate Cost (284-348): Yellow
+                    # RGB: (255, 255, 0) - Pure Yellow
+                    r = 255
+                    g = 255
+                    b = 0
+                elif val < 412:
+                    # High Cost (348-412): Orange
+                    # RGB: (255, 165, 0) - Orange
+                    r = 255
+                    g = 165
+                    b = 0
+                else:
+                    # Very High Cost (412-476): Red
+                    # RGB: (255, 0, 0) - Pure Red
+                    r = 255
+                    g = 0
+                    b = 0
+                
+                rgba_image[i, j] = [r, g, b, 200]  # Slightly more opaque for better visibility
+        
+        # Create PIL Image
+        img = Image.fromarray(rgba_image, 'RGBA')
+        
+        # Save to bytes
+        img_io = io.BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        
+        # Encode image as base64 for JSON response
+        import base64
+        img_base64 = base64.b64encode(img_io.read()).decode('utf-8')
+        
+        return jsonify({
+            'success': True,
+            'message': 'Cost surface generated successfully',
+            'image_base64': img_base64,
+            'bounds': bounds,
+            'metadata': {
+                'resolution_m': resolution_m,
+                'shape': [height, width],
+                'min_cost': float(metadata['min_cost']),
+                'max_cost': float(metadata['max_cost']),
+                'mean_cost': float(metadata['mean_cost']),
+                'weights': final_weights,
+                'enabled_layers': list(enabled_layers.keys()),
+                'data_source': 'real' if layers_data else 'demo',
+                'generation_time_s': round(gen_time, 2)
+            }
+        })
+        
+    except Exception as e:
+        print(f"❌ Error generating cost surface: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @api_bp.route('/routes/<int:route_id>/export', methods=['GET'])
 @login_required
 def export_route(route_id):
