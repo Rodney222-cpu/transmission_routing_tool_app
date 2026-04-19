@@ -47,34 +47,104 @@ class UgandaGISLoader:
         return self._fetch_from_overpass(layer_name, bounds)
     
     def _load_local_geojson(self, layer_name: str) -> Optional[Dict]:
-        """Load GeoJSON from local data folder"""
+        """Load GeoJSON or Shapefile from local data folder"""
         folder_map = {
-            'settlements': self.config.SETTLEMENTS_FOLDER,
+            'settlements': getattr(self.config, 'SCHOOLS_FOLDER', None),  # Use schools for settlements
+            'schools': getattr(self.config, 'SCHOOLS_FOLDER', None),
             'roads': self.config.ROADS_FOLDER,
             'protected_areas': self.config.PROTECTED_AREAS_FOLDER,
             'water': self.config.WATERBODIES_FOLDER,
+            'rivers': getattr(self.config, 'RIVERS_FOLDER', None),
+            'wetlands': getattr(self.config, 'WETLANDS_FOLDER', None),
+            'lakes': getattr(self.config, 'LAKES_FOLDER', None),
             'forests': self.config.FORESTS_FOLDER,
             'power': self.config.POWER_INFRASTRUCTURE_FOLDER,
             'education': self.config.EDUCATION_FOLDER,
             'airports': self.config.AIRPORTS_FOLDER,
+            'health_facilities': getattr(self.config, 'HEALTH_FACILITIES_FOLDER', None),
+            'hospitals': getattr(self.config, 'HEALTH_FACILITIES_FOLDER', None),  # Alias for health_facilities
+            'commercial': getattr(self.config, 'COMMERCIAL_FACILITIES_FOLDER', None),
+            'commercial_areas': getattr(self.config, 'COMMERCIAL_FACILITIES_FOLDER', None),  # Alias
+            'trading_centres': getattr(self.config, 'TRADING_CENTRES_FOLDER', None),
+            'elevation': getattr(self.config, 'ELEVATION_FOLDER', None),
+            'land_use': getattr(self.config, 'LAND_USE_FOLDER', None),
+            'uganda_districts': getattr(self.config, 'UGANDA_DISTRICTS_FOLDER', None),
         }
         
         folder = folder_map.get(layer_name)
         if not folder or not os.path.isdir(folder):
+            print(f"⚠️ Folder not found for layer '{layer_name}': {folder}")
             return None
         
-        # Look for GeoJSON files
+        # IMPORTANT: Load ONLY shapefiles (.shp) from the folder
+        # Ignore GeoJSON, OSM data, or any other files
+        for filename in os.listdir(folder):
+            if filename.lower().endswith('.shp'):
+                filepath = os.path.join(folder, filename)
+                try:
+                    print(f"📁 Loading shapefile for '{layer_name}': {filename}")
+                    return self._load_shapefile_as_geojson(filepath)
+                except Exception as e:
+                    print(f"❌ Error loading shapefile {filepath}: {e}")
+                    continue
+        
+        # If no shapefile found, try GeoJSON as fallback
         for filename in os.listdir(folder):
             if filename.lower().endswith(('.geojson', '.json')):
                 filepath = os.path.join(folder, filename)
                 try:
+                    print(f"📁 Loading GeoJSON fallback for '{layer_name}': {filename}")
                     with open(filepath, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e:
-                    print(f"Error loading {filepath}: {e}")
+                    print(f"❌ Error loading GeoJSON {filepath}: {e}")
                     continue
         
+        print(f"⚠️ No shapefile or GeoJSON found for layer '{layer_name}' in {folder}")
         return None
+    
+    def _load_shapefile_as_geojson(self, shapefile_path: str) -> Optional[Dict]:
+        """Convert shapefile to GeoJSON format using geopandas"""
+        try:
+            import geopandas as gpd
+            
+            print(f"✓ Reading shapefile: {shapefile_path}")
+            
+            # Read shapefile
+            gdf = gpd.read_file(shapefile_path)
+            print(f"  → Loaded {len(gdf)} features")
+            
+            # Convert to WGS84 if needed
+            if gdf.crs and gdf.crs.to_string() != 'EPSG:4326':
+                print(f"  → Converting CRS from {gdf.crs.to_string()} to EPSG:4326")
+                gdf = gdf.to_crs(epsg=4326)
+            
+            # For VERY large datasets (>100K features), sample to prevent memory errors
+            if len(gdf) > 100000:
+                sample_size = min(50000, len(gdf))
+                print(f"  ⚠️ Large dataset detected ({len(gdf)} features). Sampling {sample_size} features for performance")
+                gdf = gdf.sample(n=sample_size, random_state=42)
+                print(f"  → Sampled to {len(gdf)} features")
+            
+            # Simplify geometry for large datasets to reduce file size
+            # This preserves visual appearance but reduces coordinate precision
+            if len(gdf) > 1000:
+                # Simplify with 0.0001 degree tolerance (~10 meters)
+                gdf['geometry'] = gdf['geometry'].simplify(0.0001)
+                print(f"  → Simplified geometry for {len(gdf)} features")
+            
+            # Convert to GeoJSON with reduced coordinate precision (6 decimals = ~0.1m)
+            geojson_str = gdf.to_json(show_bbox=False)
+            geojson = json.loads(geojson_str)
+            
+            print(f"✓ Successfully converted to GeoJSON: {len(geojson['features'])} features")
+            return geojson
+            
+        except Exception as e:
+            print(f"❌ Failed to load shapefile {shapefile_path}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     
     def _filter_by_bounds(self, geojson: Dict, bounds: Tuple[float, float, float, float]) -> Dict:
         """Filter GeoJSON features by bounding box"""

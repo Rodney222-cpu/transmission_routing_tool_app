@@ -15,6 +15,7 @@ from app.optimizer.cost_surface import CostSurfaceGenerator
 from app.optimizer.dijkstra import LeastCostPathFinder
 from app.optimizer.astar import AStarPathFinder
 from app.optimizer.engineering_validation import EngineeringValidator
+# from app.optimizer.qgis_routing_workflow import QGISRoutingWorkflow  # QGIS workflow - optional enhancement
 from app.services.corridor_restriction import CorridorRestrictionService
 from app.services.gis_data_loader import load_layers_for_bounds
 from app.services.uganda_gis_loader import UgandaGISLoader
@@ -580,6 +581,65 @@ def generate_towers(project_id):
         return jsonify({'error': str(e), 'traceback': error_traceback}), 500
 
 
+@api_bp.route('/gis/layers/<layer_name>', methods=['GET'])
+@login_required
+def get_gis_layer(layer_name):
+    """
+    Load individual GIS layer as GeoJSON for map display.
+    Supports shapefiles and GeoJSON files.
+    Query params: min_lon, min_lat, max_lon, max_lat (map bounds)
+    Loads ALL features without truncation
+    """
+    try:
+        from app.services.uganda_gis_loader import UgandaGISLoader
+        from flask import Response
+        import json
+        
+        # Get map bounds
+        min_lon = float(request.args.get('min_lon', 29.5))
+        min_lat = float(request.args.get('min_lat', 0.5))
+        max_lon = float(request.args.get('max_lon', 35.0))
+        max_lat = float(request.args.get('max_lat', 4.5))
+        bounds = (min_lon, min_lat, max_lon, max_lat)
+        
+        # Load layer using UgandaGISLoader - ALL features
+        from config import Config
+        loader = UgandaGISLoader(Config())
+        
+        start_time = __import__('time').time()
+        geojson = loader.load_layer_geojson(layer_name, bounds)
+        load_time = __import__('time').time() - start_time
+        
+        if geojson is None:
+            return jsonify({
+                'type': 'FeatureCollection',
+                'features': [],
+                'message': f'No data available for layer: {layer_name}'
+            })
+        
+        feature_count = len(geojson.get('features', []))
+        print(f"✅ Loaded {layer_name}: {feature_count} features in {load_time:.2f}s")
+        
+        # For large datasets, use compact JSON to reduce size
+        if feature_count > 1000:
+            # Compact JSON without spaces
+            json_str = json.dumps(geojson, separators=(',', ':'))
+            print(f"📦 Response size: {len(json_str) / 1024 / 1024:.2f} MB")
+            return Response(json_str, mimetype='application/json')
+        else:
+            return jsonify(geojson)
+        
+    except Exception as e:
+        print(f"Error loading layer {layer_name}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'type': 'FeatureCollection',
+            'features': [],
+            'error': str(e)
+        }), 500
+
+
 @api_bp.route('/routes/<int:route_id>/export', methods=['GET'])
 @login_required
 def export_route(route_id):
@@ -666,7 +726,7 @@ def get_layers():
         layers_data = _create_demo_layers(bounds, current_app.config, out_shape)
     result = {}
     min_lon, min_lat, max_lon, max_lat = bounds
-    height, width = layers_data['dem'].shape
+    height, width = layers_data.get('dem', layers_data.get('elevation', np.zeros((60, 60)))).shape
     lon_per_pixel = (max_lon - min_lon) / width
     lat_per_pixel = (max_lat - min_lat) / height
     # Limit resolution for response size (max ~80x80 grid)
@@ -1052,46 +1112,4 @@ def _geo_to_pixel(lon, lat, bounds, shape):
     row = max(0, min(height - 1, row))
 
     return (row, col)
-
-
-@api_bp.route('/gis/layers/<layer_name>', methods=['GET'])
-@login_required
-def get_gis_layer(layer_name):
-    """
-    Get GIS layer as GeoJSON for map display
-
-    Query params:
-        - min_lon, min_lat, max_lon, max_lat: Bounding box
-
-    Supported layers:
-        - settlements, roads, protected_areas, water, forests, power, education, airports, dem
-    """
-    try:
-        # Get bounds from query params
-        min_lon = float(request.args.get('min_lon', 32.0))
-        min_lat = float(request.args.get('min_lat', 3.0))
-        max_lon = float(request.args.get('max_lon', 33.0))
-        max_lat = float(request.args.get('max_lat', 4.0))
-
-        bounds = (min_lon, min_lat, max_lon, max_lat)
-
-        # Load GIS data
-        loader = UgandaGISLoader(current_app.config)
-        geojson = loader.load_layer_geojson(layer_name, bounds)
-
-        if geojson:
-            return jsonify(geojson)
-        else:
-            # Return empty FeatureCollection if no data
-            return jsonify({
-                'type': 'FeatureCollection',
-                'features': []
-            })
-
-    except Exception as e:
-        return jsonify({
-            'error': f'Failed to load layer: {str(e)}',
-            'type': 'FeatureCollection',
-            'features': []
-        }), 500
 

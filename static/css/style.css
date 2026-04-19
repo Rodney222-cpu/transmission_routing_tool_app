@@ -684,3 +684,151 @@ body {
     color: white;
 }
 
+/* QGIS-style toolbar and UI elements */
+.qgis-toolbar {
+    display: flex;
+    gap: 5px;
+    padding: 8px;
+    background: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    flex-wrap: wrap;
+    max-width: 90vw;
+}
+
+.qgis-btn {
+    padding: 6px 10px;
+    background: #f0f0f0;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.qgis-btn:hover {
+    background: #e0e0e0;
+    border-color: #999;
+}
+
+.qgis-btn.active {
+    background: #4CAF50;
+    color: white;
+    border-color: #4CAF50;
+}
+
+.qgis-statusbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 12px;
+    background: rgba(255,255,255,0.95);
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    font-size: 11px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.layer-panel, .attribute-panel {
+    background: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    padding: 12px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.layer-panel h4, .attribute-panel h4 {
+    margin: 0 0 10px 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #eee;
+    font-size: 14px;
+}
+
+.layer-tree-item {
+    display: flex;
+    align-items: center;
+    padding: 4px 0;
+    font-size: 12px;
+}
+
+.layer-tree-item input {
+    margin-right: 8px;
+}
+
+.layer-tree-item label {
+    cursor: pointer;
+    flex: 1;
+}
+
+.attribute-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.attribute-table th, .attribute-table td {
+    padding: 6px;
+    border: 1px solid #ddd;
+    text-align: left;
+}
+
+.attribute-table th {
+    background: #f5f5f5;
+    font-weight: 600;
+}
+
+.attribute-table tr:nth-child(even) {
+    background: #fafafa;
+}
+
+/* Measurement styling */
+.measurement-tooltip {
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+/* Profile chart container */
+.profile-chart-container {
+    position: absolute;
+    bottom: 50px;
+    left: 10px;
+    right: 10px;
+    background: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    padding: 10px;
+    z-index: 1000;
+    max-height: 200px;
+}
+
+/* Buffer styling */
+.buffer-circle {
+    stroke-dasharray: 5, 5;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .qgis-toolbar {
+        top: 5px;
+        left: 5px;
+        right: 5px;
+        max-width: calc(100vw - 10px);
+    }
+    
+    .qgis-btn {
+        padding: 4px 6px;
+        font-size: 10px;
+    }
+    
+    .qgis-statusbar {
+        font-size: 10px;
+        padding: 4px 8px;
+    }
+}

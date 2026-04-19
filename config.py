@@ -36,7 +36,7 @@ class Config:
     MAPTILER_API_KEY = os.environ.get('MAPTILER_API_KEY', '')
     THUNDERFOREST_API_KEY = os.environ.get('THUNDERFOREST_API_KEY', '')
 
-    # GIS Data paths
+    # GIS Data paths - Real Uganda Shapefiles
     DATA_FOLDER = os.path.join(basedir, 'data')
     DEM_FOLDER = os.path.join(DATA_FOLDER, 'dem')
     LANDCOVER_FOLDER = os.path.join(DATA_FOLDER, 'landcover')
@@ -48,6 +48,18 @@ class Config:
     WATERBODIES_FOLDER = os.path.join(DATA_FOLDER, 'waterbodies')
     FORESTS_FOLDER = os.path.join(DATA_FOLDER, 'forests')
     AIRPORTS_FOLDER = os.path.join(DATA_FOLDER, 'airports')
+    
+    # NEW: Additional Uganda shapefile layers (from Downloads folder)
+    ELEVATION_FOLDER = os.path.join(DATA_FOLDER, 'elevation')  # Contours
+    SCHOOLS_FOLDER = os.path.join(DATA_FOLDER, 'schools')  # Schools
+    RIVERS_FOLDER = os.path.join(DATA_FOLDER, 'rivers')  # Rivers
+    WETLANDS_FOLDER = os.path.join(DATA_FOLDER, 'wetlands')  # Wetlands
+    LAKES_FOLDER = os.path.join(DATA_FOLDER, 'lakes')  # Lakes
+    HEALTH_FACILITIES_FOLDER = os.path.join(DATA_FOLDER, 'health_facilities')  # Health
+    COMMERCIAL_FACILITIES_FOLDER = os.path.join(DATA_FOLDER, 'commercial_facilities')  # Commercial
+    TRADING_CENTRES_FOLDER = os.path.join(DATA_FOLDER, 'trading_centres')  # Trading Centres
+    UGANDA_DISTRICTS_FOLDER = os.path.join(DATA_FOLDER, 'uganda_districts')  # Districts
+    LAND_USE_FOLDER = os.path.join(DATA_FOLDER, 'land_use')  # Land Use
     
     # Case Study: Olwiyo - South Sudan Line Specifications
     VOLTAGE_LEVEL = 400  # kV

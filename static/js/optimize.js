@@ -10,7 +10,8 @@ let ahpWeights = {
     roads: 0.10,             // Roads
     elevation: 0.15,         // Elevation
     lakes: 0.15,             // Lakes
-    settlements: 0.15        // Settlements (Schools)
+    settlements: 0.15,       // Settlements (Schools)
+    land_use: 0.15           // Land Use
 };
 
 // Waypoints array
@@ -67,7 +68,8 @@ function setupWeightSliders() {
         roads: document.getElementById('roadsWeight'),
         elevation: document.getElementById('elevationWeight'),
         lakes: document.getElementById('lakesWeight'),
-        settlements: document.getElementById('settlementsWeight')
+        settlements: document.getElementById('settlementsWeight'),
+        land_use: document.getElementById('landUseWeight')
     };
 
     const values = {
@@ -77,7 +79,8 @@ function setupWeightSliders() {
         roads: document.getElementById('roadsValue'),
         elevation: document.getElementById('elevationValue'),
         lakes: document.getElementById('lakesValue'),
-        settlements: document.getElementById('settlementsValue')
+        settlements: document.getElementById('settlementsValue'),
+        land_use: document.getElementById('landUseValue')
     };
 
     // Update weights when sliders change

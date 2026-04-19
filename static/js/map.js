@@ -1,7 +1,7 @@
 /**
  * Map initialization and management for Transmission Line Routing Tool
  * Uses Leaflet.js for Uganda map visualization with Uganda-only data
- * NO OpenStreetMap or world map data - only Uganda shapefiles
+ * NO basemaps - blank white space with Uganda districts layer only
  */
 
 // Global map instance
@@ -12,7 +12,7 @@ let routeLayer = null;
 let corridorLayer = null;
 let towerMarkers = [];
 let waypointMarkers = {}; // Store waypoint markers by ID
-let ugandaBoundaryLayer = null; // Uganda boundary from ug.json
+let ugandaDistrictsLayer = null; // Uganda districts base layer
 
 // No preset points - user must set start, way and end points
 // Current project state (start/end set by user via map)
@@ -28,13 +28,14 @@ let selectionMode = null; // 'start', 'end', or 'waypoint'
 let currentWaypointId = null; // ID of waypoint being placed
 
 /**
- * Initialize the map with Uganda-only basemap from ug.json
+ * Initialize the map with BLANK WHITE SPACE (no basemaps)
+ * Uganda districts layer will be added as the base reference
  */
 function initMap() {
     // Uganda bounds: approximately [0.5, 29.5] to [4.5, 35.0]
     const ugandaBounds = [[0.5, 29.5], [4.5, 35.0]];
     
-    // Create map centered on Uganda with restricted view
+    // Create map with NO basemap - blank white space
     map = L.map('map', {
         center: [1.3733, 32.2903],
         zoom: 8,
@@ -44,28 +45,18 @@ function initMap() {
         maxBoundsViscosity: 1.0  // Hard restrict to Uganda bounds
     });
     
-    // Load Uganda boundary from ug.json as the basemap
-    loadUgandaBasemap();
+    // NO BASEMAPS - blank white space only
+    // Uganda districts will be loaded as the reference layer
+    
+    // Load Uganda districts as base reference layer
+    loadUgandaDistrictsLayer();
+    // loadUgandaBasemap();
     
     // Fit map to Uganda bounds
     map.fitBounds(ugandaBounds);
     
-    // GIS overlay layers from YOUR SHAPEFILES only (NO OpenStreetMap data)
-    const overlayLayers = {
-        "🏔️ Elevation (Contours)": createDEMLayer(),
-        "🏫 Schools": createSchoolsLayer(),
-        "🛣️ Roads (UNRA 2012)": createRoadsLayer(),
-        "🌊 Rivers": createRiversLayer(),
-        "🌊 Wetlands (1994)": createWetlandsLayer(),
-        "🌊 Lakes": createLakesLayer(),
-        "🦁 Protected Areas": createProtectedAreasLayer(),
-        "🏥 Health Facilities": createHealthFacilitiesLayer(),
-        "🏢 Commercial Facilities": createCommercialLayer(),
-        "🏘️ Trading Centres": createTradingCentresLayer()
-    };
-
-    // Layer control - overlays only, Uganda base is always visible
-    L.control.layers(null, overlayLayers, {collapsed: true, position: 'topright'}).addTo(map);
+    // NO OLD LAYER CONTROL - Using new checkbox-based layer manager
+    // All layers are controlled via checkboxes in dashboard.html
     
     // Add scale
     L.control.scale({ imperial: false, metric: true }).addTo(map);
@@ -107,100 +98,38 @@ function initMap() {
 }
 
 /**
- * Load Uganda boundary from uganda_country_boundary.json as the basemap
+ * Uganda boundary overlay removed per user request
+ * Map now shows only QGIS basemaps without boundary overlay
  */
-async function loadUgandaBasemap() {
-    try {
-        // Load uganda_boundary_final.json (proper Uganda country boundary from shapefile)
-        const response = await fetch('/data/uganda_boundary_final.json');
-        if (!response.ok) {
-            console.warn('Could not load uganda_boundary_final.json, using fallback');
-            addUgandaFallbackBoundary();
-            return;
-        }
-        
-        const ugandaGeoJSON = await response.json();
-        
-        // Add Uganda boundary as filled polygon (the basemap)
-        ugandaBoundaryLayer = L.geoJSON(ugandaGeoJSON, {
-            style: {
-                color: '#228B22',        // Forest green border
-                weight: 3,
-                opacity: 1.0,
-                fillColor: '#90EE90',    // Light green fill
-                fillOpacity: 0.4         // Semi-transparent
-            }
-        }).addTo(map);
-        
-        // Fit map to Uganda bounds
-        map.fitBounds(ugandaBoundaryLayer.getBounds());
-        
-        // Add country label at center
-        const center = ugandaBoundaryLayer.getBounds().getCenter();
-        L.marker([center.lat, center.lng], {
-            icon: L.divIcon({
-                className: 'uganda-label',
-                html: '<div style="font-size: 32px; font-weight: bold; color: #006400; text-shadow: 2px 2px 4px white;">🇺🇬 UGANDA</div>',
-                iconSize: [250, 60],
-                iconAnchor: [125, 30]
-            })
-        }).addTo(map);
-        
-        console.log('✓ Uganda country basemap loaded');
-        
-    } catch (error) {
-        console.error('Error loading Uganda basemap:', error);
-        addUgandaFallbackBoundary();
-    }
+function loadUgandaBasemap() {
+    // No boundary overlay - user requested removal
+    console.log('✓ Uganda boundary overlay disabled (user request)');
 }
 
 /**
- * Fallback Uganda boundary if JSON fails to load
- * Based on actual Uganda extent: [-1.48, 29.59] to [4.23, 35.00]
+ * Load Uganda Districts layer as the base reference map
+ * Uses shapefile: data/uganda_districts/uganda_districts_2019_i.shp
+ * This loads IMMEDIATELY when map initializes with ALL 136 districts
  */
-function addUgandaFallbackBoundary() {
-    // More accurate Uganda border coordinates (approximate)
-    const ugandaBorder = [
-        [4.23, 30.26],      // North (South Sudan border)
-        [3.95, 32.10],      // North-East
-        [3.45, 33.20],      // North-East (Kenya border)
-        [2.30, 34.50],      // East (Kenya border)
-        [1.50, 34.95],      // East
-        [0.35, 34.10],      // South-East (Tanzania border)
-        [-0.05, 33.20],     // South
-        [-0.50, 32.10],     // South-West (Rwanda border)
-        [-0.95, 31.10],     // South-West (Tanzania border)
-        [-1.30, 30.50],     // South-West
-        [-1.48, 30.00],     // West (DRC border)
-        [-1.30, 29.80],     // West
-        [-0.50, 29.60],     // West (DRC border)
-        [0.80, 29.60],      // West
-        [2.30, 29.75],      // West (DRC border)
-        [3.50, 30.00],      // North-West (South Sudan border)
-        [4.23, 30.26]       // Close polygon
-    ];
+function loadUgandaDistrictsLayer() {
+    console.log('🗺️ Loading Uganda Districts as basemap (ALL 136 districts)...');
     
-    ugandaBoundaryLayer = L.polygon(ugandaBorder, {
-        color: '#228B22',
-        weight: 3,
-        opacity: 1.0,
-        fillColor: '#90EE90',
-        fillOpacity: 0.4
-    }).addTo(map);
+    ugandaDistrictsLayer = L.layerGroup();
     
-    // Fit to bounds
-    map.fitBounds(ugandaBoundaryLayer.getBounds());
+    // Use UGANDA BOUNDS, not current map view, to load ALL districts
+    const ugandaBounds = { min_lon: 29.5, min_lat: 0.5, max_lon: 35.0, max_lat: 4.5 };
     
-    // Add label at center
-    const center = ugandaBoundaryLayer.getBounds().getCenter();
-    L.marker([center.lat, center.lng], {
-        icon: L.divIcon({
-            className: 'uganda-label',
-            html: '<div style="font-size: 32px; font-weight: bold; color: #006400; text-shadow: 2px 2px 4px white;">🇺🇬 UGANDA</div>',
-            iconSize: [250, 60],
-            iconAnchor: [125, 30]
-        })
-    }).addTo(map);
+    // Directly load the shapefile via API with full Uganda bounds
+    loadGISLayerWithBounds('uganda_districts', ugandaDistrictsLayer, {
+        color: '#666666',
+        fillColor: '#E8E8E8',
+        fillOpacity: 0.4,
+        weight: 1.5
+    }, 'District', ugandaBounds);
+    
+    // Add to map immediately
+    ugandaDistrictsLayer.addTo(map);
+    console.log('✅ Uganda Districts layer added to map');
 }
 
 /**
@@ -469,6 +398,12 @@ function createTradingCentresLayer() {
  */
 async function loadGISLayer(layerName, leafletLayer, style, popupPrefix) {
     try {
+        console.log(`🔄 Loading layer: ${layerName}`);
+        
+        // Show loading message
+        const loadMsg = `⏳ Loading ${layerName}... please wait`;
+        console.log(loadMsg);
+        
         // Get current map bounds
         const bounds = map.getBounds();
         const min_lon = bounds.getWest();
@@ -476,22 +411,33 @@ async function loadGISLayer(layerName, leafletLayer, style, popupPrefix) {
         const max_lon = bounds.getEast();
         const max_lat = bounds.getNorth();
 
-        // Fetch GeoJSON from API
-        const response = await fetch(
-            `/api/gis/layers/${layerName}?min_lon=${min_lon}&min_lat=${min_lat}&max_lon=${max_lon}&max_lat=${max_lat}`
-        );
+        console.log(`📍 Map bounds: ${min_lon}, ${min_lat} to ${max_lon}, ${max_lat}`);
+
+        // Fetch GeoJSON from API - ALL features, no limit
+        const url = `/api/gis/layers/${layerName}?min_lon=${min_lon}&min_lat=${min_lat}&max_lon=${max_lon}&max_lat=${max_lat}`;
+        console.log(`🌐 Fetching: ${url}`);
+        
+        const startTime = Date.now();
+        const response = await fetch(url);
+        const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
 
         if (!response.ok) {
-            console.warn(`Failed to load ${layerName} layer`);
+            console.error(`❌ Failed to load ${layerName} layer: HTTP ${response.status}`);
+            const errorText = await response.text();
+            console.error('Error response:', errorText);
             return;
         }
 
         const geojson = await response.json();
+        console.log(`📦 Received GeoJSON for ${layerName} in ${loadTime}s`);
 
         if (!geojson || !geojson.features || geojson.features.length === 0) {
-            console.log(`No ${layerName} data available for this area`);
+            console.warn(`⚠️ No ${layerName} data available (0 features)`);
             return;
         }
+
+        const featureCount = geojson.features.length;
+        console.log(`✓ Loading ALL ${featureCount} features for ${layerName}`);
 
         // Add GeoJSON to layer with styling
         const geoJsonLayer = L.geoJSON(geojson, {
@@ -503,15 +449,103 @@ async function loadGISLayer(layerName, leafletLayer, style, popupPrefix) {
                 return L.marker(latlng);
             },
             onEachFeature: function(feature, layer) {
-                const name = feature.properties.name || feature.properties.type || popupPrefix;
+                const name = feature.properties.name || feature.properties.DName2019 || feature.properties.DName2016 || feature.properties.type || popupPrefix;
                 layer.bindPopup(`<b>${popupPrefix}</b><br>${name}`);
+                
+                // Add click handler for QGIS attribute table
+                layer.on('click', function(e) {
+                    if (typeof showAttributeTable === 'function') {
+                        showAttributeTable(feature, layer);
+                    }
+                });
             }
         });
 
         leafletLayer.addLayer(geoJsonLayer);
+        console.log(`✅ Successfully added ${layerName} to map (${loadTime}s, ${featureCount} features)`);
+        
+        // Fit map to layer bounds if it's the districts layer
+        if (layerName === 'uganda_districts') {
+            map.fitBounds(geoJsonLayer.getBounds());
+            console.log('🎯 Map fitted to Uganda districts bounds');
+        }
 
     } catch (error) {
-        console.error(`Error loading ${layerName} layer:`, error);
+        console.error(`❌ Error loading ${layerName} layer:`, error);
+    }
+}
+
+/**
+ * Load GIS layer from API with custom bounds (for loading full datasets)
+ */
+async function loadGISLayerWithBounds(layerName, leafletLayer, style, popupPrefix, customBounds) {
+    try {
+        console.log(`🔄 Loading layer with custom bounds: ${layerName}`);
+        
+        // Use custom bounds instead of map bounds
+        const min_lon = customBounds.min_lon;
+        const min_lat = customBounds.min_lat;
+        const max_lon = customBounds.max_lon;
+        const max_lat = customBounds.max_lat;
+
+        console.log(`📍 Custom bounds: ${min_lon}, ${min_lat} to ${max_lon}, ${max_lat}`);
+
+        // Fetch GeoJSON from API
+        const url = `/api/gis/layers/${layerName}?min_lon=${min_lon}&min_lat=${min_lat}&max_lon=${max_lon}&max_lat=${max_lat}`;
+        console.log(`🌐 Fetching: ${url}`);
+        
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            console.error(`❌ Failed to load ${layerName} layer: HTTP ${response.status}`);
+            const errorText = await response.text();
+            console.error('Error response:', errorText);
+            return;
+        }
+
+        const geojson = await response.json();
+        console.log(`📦 Received GeoJSON for ${layerName}:`, geojson);
+
+        if (!geojson || !geojson.features || geojson.features.length === 0) {
+            console.warn(`⚠️ No ${layerName} data available (0 features)`);
+            return;
+        }
+
+        console.log(`✓ Loading ${geojson.features.length} features for ${layerName}`);
+
+        // Add GeoJSON to layer with styling
+        const geoJsonLayer = L.geoJSON(geojson, {
+            style: style,
+            pointToLayer: function(feature, latlng) {
+                if (style.radius) {
+                    return L.circleMarker(latlng, style);
+                }
+                return L.marker(latlng);
+            },
+            onEachFeature: function(feature, layer) {
+                const name = feature.properties.name || feature.properties.DName2019 || feature.properties.DName2016 || feature.properties.type || popupPrefix;
+                layer.bindPopup(`<b>${popupPrefix}</b><br>${name}`);
+                
+                // Add click handler for QGIS attribute table
+                layer.on('click', function(e) {
+                    if (typeof showAttributeTable === 'function') {
+                        showAttributeTable(feature, layer);
+                    }
+                });
+            }
+        });
+
+        leafletLayer.addLayer(geoJsonLayer);
+        console.log(`✅ Successfully added ${layerName} to map`);
+        
+        // Fit map to layer bounds if it's the districts layer
+        if (layerName === 'uganda_districts') {
+            map.fitBounds(geoJsonLayer.getBounds());
+            console.log('🎯 Map fitted to Uganda districts bounds');
+        }
+
+    } catch (error) {
+        console.error(`❌ Error loading ${layerName} layer:`, error);
     }
 }
 
@@ -698,4 +732,13 @@ function displayCorridor(corridorGeoJSON) {
 }
 
 // Initialize map when page loads
-document.addEventListener('DOMContentLoaded', initMap);
+document.addEventListener('DOMContentLoaded', function() {
+    initMap();
+    
+    // Initialize QGIS tools after map is ready
+    setTimeout(function() {
+        if (typeof initQGISTools === 'function') {
+            initQGISTools();
+        }
+    }, 500);
+});

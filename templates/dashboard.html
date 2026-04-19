@@ -156,6 +156,11 @@
                         <input type="range" id="settlementsWeight" min="0" max="1" step="0.01" value="0.15">
                     </div>
 
+                    <div class="weight-control">
+                        <label>Land Use: <span id="landUseValue">0.15</span></label>
+                        <input type="range" id="landUseWeight" min="0" max="1" step="0.01" value="0.15">
+                    </div>
+
                     <div class="weight-sum">Total: <span id="weightSum">1.00</span></div>
                 </div>
                 
@@ -221,25 +226,132 @@
             <main class="map-container">
                 <div id="map"></div>
                 
-                <!-- Map Controls - Compact Layer Panel -->
-                <div class="map-controls" style="max-height: 220px; overflow-y: auto;">
+                <!-- QGIS-style Toolbar -->
+                <div class="qgis-toolbar" style="position: absolute; top: 10px; left: 60px; z-index: 1000; background: white; padding: 5px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; gap: 5px;">
+                    <!-- Navigation Tools -->
+                    <button id="panTool" class="qgis-btn" title="Pan Map" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🖱️ Pan</button>
+                    <button id="zoomInTool" class="qgis-btn" title="Zoom In" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🔍+ Zoom In</button>
+                    <button id="zoomOutTool" class="qgis-btn" title="Zoom Out" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🔍- Zoom Out</button>
+                    <button id="zoomToLayerBtn" class="qgis-btn" title="Zoom to Layer" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">📐 Zoom to Layer</button>
+                    
+                    <!-- Measurement Tools -->
+                    <button id="measureDistance" class="qgis-btn" title="Measure Distance" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">📏 Measure Distance</button>
+                    <button id="measureArea" class="qgis-btn" title="Measure Area" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">📐 Measure Area</button>
+                    
+                    <!-- Analysis Tools -->
+                    <button id="profileTool" class="qgis-btn" title="Elevation Profile" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">📊 Elevation Profile</button>
+                    <button id="bufferTool" class="qgis-btn" title="Buffer Analysis" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🔵 Buffer</button>
+                    
+                    <!-- Export Tools -->
+                    <button id="printMap" class="qgis-btn" title="Print Map" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🖨️ Print</button>
+                    <button id="exportMapImage" class="qgis-btn" title="Export Map as Image" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">📸 Export Image</button>
+                    
+                    <!-- Layer Panel Toggle -->
+                    <button id="toggleLayerPanel" class="qgis-btn" title="Toggle Layer Panel" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🗂️ Layers</button>
+                </div>
+                
+                <!-- Coordinate Display (QGIS-style status bar) -->
+                <div class="qgis-statusbar" style="position: absolute; bottom: 10px; left: 10px; right: 10px; z-index: 1000; background: rgba(255,255,255,0.9); padding: 5px 10px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+                    <div id="coordinateDisplay">
+                        <strong>Coordinates:</strong> <span id="mouseCoords">Click on map to see coordinates</span>
+                    </div>
+                    <div id="scaleDisplay">
+                        <strong>Scale:</strong> <span id="mapScale">1:---</span>
+                    </div>
+                    <div id="crsDisplay">
+                        <strong>CRS:</strong> EPSG:4326 (WGS 84)
+                    </div>
+                </div>
+                
+                <!-- Map Controls - Layer Checkboxes -->
+                <div class="map-controls" style="max-height: 300px; overflow-y: auto;">
                     <div class="control-group" style="padding: 8px;">
-                        <p class="help-text" style="margin-bottom: 4px; font-size: 10px; font-weight: 600;">🗺️ Uganda Basemap</p>
+                        <p class="help-text" style="margin-bottom: 6px; font-size: 11px; font-weight: 600;">🗺️ GIS Layers (Shapefiles)</p>
                         
-                        <div class="layer-category" style="margin-bottom: 6px;">
-                            <p style="font-size: 8px; color: #666; margin: 0 0 2px 0; font-weight: 600;">BASEMAP</p>
-                            <label class="layer-option" style="display: flex; align-items: center; padding: 1px 0; cursor: pointer; font-size: 10px;">
-                                <input type="checkbox" id="showUgandaBoundary" checked disabled style="margin-right: 4px;">
-                                <span>🇺🇬 Uganda Boundary (shapefile)</span>
+                        <div class="layer-category" style="margin-bottom: 8px;">
+                            <p style="font-size: 9px; color: #666; margin: 0 0 4px 0; font-weight: 600;">BASE MAP</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showUgandaDistricts" checked style="margin-right: 6px;">
+                                <span>🇺🇬 Uganda Districts</span>
                             </label>
                         </div>
                         
-                        <div id="activeLayersInfo" style="background: #e3f2fd; padding: 3px 5px; border-radius: 3px; margin: 4px 0; font-size: 9px; display: none;">
-                            <strong>Active:</strong> <span id="activeLayersList"></span>
+                        <div class="layer-category" style="margin-bottom: 8px;">
+                            <p style="font-size: 9px; color: #666; margin: 0 0 4px 0; font-weight: 600;">ENVIRONMENTAL</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showProtectedAreas" style="margin-right: 6px;">
+                                <span>🦁 Protected Areas</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showRivers" style="margin-right: 6px;">
+                                <span>🌊 Rivers</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showWetlands" style="margin-right: 6px;">
+                                <span>🌊 Wetlands (1994)</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showLakes" style="margin-right: 6px;">
+                                <span>🌊 Lakes</span>
+                            </label>
                         </div>
                         
-                        <button id="clearLayers" style="margin-top: 4px; padding: 3px 6px; font-size: 9px; background: #f44336; color: white; border: none; border-radius: 3px; cursor: pointer; width: 100%;">Clear All</button>
+                        <div class="layer-category" style="margin-bottom: 8px;">
+                            <p style="font-size: 9px; color: #666; margin: 0 0 4px 0; font-weight: 600;">INFRASTRUCTURE</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showRoads" style="margin-right: 6px;">
+                                <span>🛣️ Roads (UNRA 2012)</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showElevation" style="margin-right: 6px;">
+                                <span>🏔️ Elevation (Contours)</span>
+                            </label>
+                        </div>
+                        
+                        <div class="layer-category" style="margin-bottom: 8px;">
+                            <p style="font-size: 9px; color: #666; margin: 0 0 4px 0; font-weight: 600;">SETTLEMENTS & FACILITIES</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showSettlements" style="margin-right: 6px;">
+                                <span>🏫 Settlements (Schools)</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showHospitals" style="margin-right: 6px;">
+                                <span>🏥 Hospitals</span>
+                            </label>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showCommercial" style="margin-right: 6px;">
+                                <span>🏢 Commercial Areas</span>
+                            </label>
+                        </div>
+                        
+                        <div class="layer-category">
+                            <p style="font-size: 9px; color: #666; margin: 0 0 4px 0; font-weight: 600;">LAND COVER</p>
+                            <label class="layer-option" style="display: flex; align-items: center; padding: 3px 0; cursor: pointer; font-size: 11px;">
+                                <input type="checkbox" id="showLandUse" style="margin-right: 6px;">
+                                <span>🌍 Land Use</span>
+                            </label>
+                        </div>
+                        
+                        <button id="clearLayers" style="margin-top: 10px; padding: 5px 10px; font-size: 10px; background: #f44336; color: white; border: none; border-radius: 3px; cursor: pointer; width: 100%;">Clear All Layers</button>
                     </div>
+                </div>
+                
+                <!-- Layer Panel (QGIS-style) -->
+                <div class="layer-panel" style="position: absolute; top: 10px; right: 10px; z-index: 1000; background: white; padding: 10px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); width: 250px; max-height: 400px; overflow-y: auto; display: none;">
+                    <h4 style="margin: 0 0 10px 0; padding-bottom: 5px; border-bottom: 1px solid #eee;">🗂️ Layer Management</h4>
+                    <div id="layerTree">
+                        <!-- Layers will be populated dynamically -->
+                    </div>
+                    <button id="closeLayerPanel" style="margin-top: 10px; padding: 3px 8px; background: #666; color: white; border: none; border-radius: 3px; cursor: pointer; width: 100%;">Close</button>
+                </div>
+                
+                <!-- Attribute Table Panel -->
+                <div class="attribute-panel" style="position: absolute; top: 50px; right: 10px; z-index: 1000; background: white; padding: 10px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); width: 400px; max-height: 300px; overflow-y: auto; display: none;">
+                    <h4 style="margin: 0 0 10px 0; padding-bottom: 5px; border-bottom: 1px solid #eee;">📋 Attribute Table</h4>
+                    <div id="attributeTableContent">
+                        <p>Select a feature on the map to view its attributes</p>
+                    </div>
+                    <button id="closeAttributePanel" style="margin-top: 10px; padding: 3px 8px; background: #666; color: white; border: none; border-radius: 3px; cursor: pointer; width: 100%;">Close</button>
                 </div>
             </main>
         </div>
@@ -251,6 +363,8 @@
     <!-- Custom JS -->
     <script src="{{ url_for('static', filename='js/map.js') }}"></script>
     <script src="{{ url_for('static', filename='js/optimize.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/qgis_tools.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/layer_manager.js') }}"></script>
 </body>
 </html>
 
