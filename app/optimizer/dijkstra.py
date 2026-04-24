@@ -255,3 +255,142 @@ class LeastCostPathFinder:
         # Return distance from point to projection
         return np.linalg.norm(point - projection)
 
+    # ---------------------------------------------------------------
+    # Line-of-sight (LOS) smoothing
+    # ---------------------------------------------------------------
+    # The 8-connected grid search produces a staircase zigzag whenever the
+    # true bearing between two points is not a multiple of 45 deg. The raw
+    # path also contains tiny wiggles wherever two neighbours have nearly
+    # identical cost. Both are pure artefacts of the grid - they add length
+    # and bends without avoiding anything meaningful.
+    #
+    # smooth_path_los() walks the path and greedily replaces A->B->...->C
+    # with the direct line A->C whenever the straight line:
+    #   - does not cross any impassable cell (cost >= 99), AND
+    #   - has total Dijkstra-style cost not exceeding
+    #     max_cost_ratio x the zigzag's original cost.
+    # Shortcuts through obstacles or significantly more expensive terrain are
+    # rejected automatically, so legitimate detours are preserved.
+
+    @staticmethod
+    def _bresenham_line(r0: int, c0: int, r1: int, c1: int) -> List[Tuple[int, int]]:
+        """Return the list of integer cells on the line from (r0,c0) to (r1,c1), inclusive."""
+        cells = []
+        dr = abs(r1 - r0)
+        dc = abs(c1 - c0)
+        sr = 1 if r0 < r1 else -1
+        sc = 1 if c0 < c1 else -1
+        err = dr - dc
+        r, c = r0, c0
+        while True:
+            cells.append((r, c))
+            if r == r1 and c == c1:
+                break
+            e2 = 2 * err
+            if e2 > -dc:
+                err -= dc
+                r += sr
+            if e2 < dr:
+                err += dr
+                c += sc
+        return cells
+
+    def _line_cost(self, r0: int, c0: int, r1: int, c1: int) -> float:
+        """Dijkstra-style cost of the straight line between two cells.
+        Returns +inf if the line crosses any impassable cell (cost >= 99)."""
+        cells = self._bresenham_line(r0, c0, r1, c1)
+        total = 0.0
+        for i, (r, c) in enumerate(cells):
+            t = self.cost_surface[r, c]
+            if t >= 99:
+                return float('inf')
+            if i == 0:
+                continue
+            pr, pc = cells[i - 1]
+            dr = abs(r - pr)
+            dc = abs(c - pc)
+            mov = 1.414 if (dr == 1 and dc == 1) else 1.0
+            total += mov * t
+        return total
+
+    def _segment_cost(self, path: List[Tuple[int, int]], i: int, j: int) -> float:
+        """Dijkstra-style cost along path[i..j]. Grid-adjacent steps use the
+        8-neighbour cost; non-adjacent hops (produced by prior smoothing) are
+        priced via the Bresenham line integral so iterated passes stay
+        mathematically consistent. Returns +inf if any segment is blocked."""
+        total = 0.0
+        for k in range(i + 1, j + 1):
+            r0, c0 = path[k - 1]
+            r1, c1 = path[k]
+            dr = abs(r1 - r0)
+            dc = abs(c1 - c0)
+            if dr <= 1 and dc <= 1:
+                mov = 1.414 if (dr == 1 and dc == 1) else 1.0
+                total += mov * self.cost_surface[r1, c1]
+            else:
+                line = self._line_cost(r0, c0, r1, c1)
+                if line == float('inf'):
+                    return float('inf')
+                total += line
+        return total
+
+    def _smooth_los_single_pass(self, path: List[Tuple[int, int]],
+                                max_cost_ratio: float) -> List[Tuple[int, int]]:
+        """One greedy forward pass of LOS shortcutting. See smooth_path_los."""
+        n = len(path)
+        if n < 3:
+            return list(path)
+        smoothed: List[Tuple[int, int]] = [path[0]]
+        i = 0
+        while i < n - 1:
+            best_j = i + 1
+            j = i + 2
+            while j < n:
+                r0, c0 = path[i]
+                r1, c1 = path[j]
+                direct = self._line_cost(r0, c0, r1, c1)
+                if direct == float('inf'):
+                    break
+                original = self._segment_cost(path, i, j)
+                if original == float('inf'):
+                    break
+                if direct <= max_cost_ratio * original:
+                    best_j = j
+                    j += 1
+                else:
+                    break
+            smoothed.append(path[best_j])
+            i = best_j
+        return smoothed
+
+    def smooth_path_los(self, path: List[Tuple[int, int]],
+                        max_cost_ratio: float = 1.2,
+                        max_iterations: int = 5) -> List[Tuple[int, int]]:
+        """Collapse grid-staircase zigzag via iterated line-of-sight shortcutting.
+
+        Args:
+            path: Raw grid path from find_path(), list of (row, col).
+            max_cost_ratio: Shortcut accepted if its cost <= ratio x original.
+                Default 1.2 tolerates small cost fluctuations along otherwise
+                clear terrain while still rejecting genuine obstacle detours
+                (which typically cost 2x+ of the equivalent straight line).
+            max_iterations: Re-run the greedy pass up to this many times.
+                Later passes find shortcuts that only became evaluable once an
+                earlier pass thinned the vertex list. Converges quickly (1-3
+                iterations on most real paths).
+
+        Returns:
+            A list of (row, col) vertices with the same start/end as path but
+            typically far fewer bends. Consecutive vertices are no longer
+            required to be grid-adjacent.
+        """
+        if len(path) < 3:
+            return list(path)
+        current = list(path)
+        for _ in range(max_iterations):
+            nxt = self._smooth_los_single_pass(current, max_cost_ratio)
+            if len(nxt) == len(current):
+                return nxt
+            current = nxt
+        return current
+

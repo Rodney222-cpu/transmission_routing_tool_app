@@ -769,12 +769,34 @@ let avoidanceChart = null;
 let elevationChart = null;
 
 /**
+ * Render an inline placeholder inside a chart's parent container when the
+ * Chart.js library failed to load from its CDN. Lets the rest of the
+ * results flow (metrics, cost summary, route on map) still complete.
+ */
+function _renderChartUnavailable(ctx) {
+    const container = ctx && ctx.parentElement;
+    if (!container) return;
+    container.innerHTML =
+        '<p style="text-align:center; color:#666; padding:20px; font-size:12px;">' +
+        'Chart library unavailable — route results are still valid above. ' +
+        'Check browser DevTools → Network for a blocked request to ' +
+        '<code>chart.umd.min.js</code> (offline, firewall, or ad-blocker).' +
+        '</p>';
+}
+
+/**
  * Create dynamic route optimality chart based on actual route data
  * Shows how well the route avoids different features
  */
 function createDynamicAvoidanceChart(result) {
     const ctx = document.getElementById('avoidanceChart');
     if (!ctx) return;
+
+    if (typeof Chart === 'undefined') {
+        console.warn('Chart.js not loaded; skipping avoidance chart.');
+        _renderChartUnavailable(ctx);
+        return;
+    }
 
     if (avoidanceChart) avoidanceChart.destroy();
 
@@ -881,6 +903,11 @@ function createElevationChart(result) {
     const ctx = document.getElementById('elevationChart');
     if (!ctx) {
         console.warn('Elevation chart canvas not found');
+        return;
+    }
+    if (typeof Chart === 'undefined') {
+        console.warn('Chart.js not loaded; skipping elevation chart.');
+        _renderChartUnavailable(ctx);
         return;
     }
     if (elevationChart) elevationChart.destroy();
@@ -1263,9 +1290,10 @@ async function generateCostSurface() {
             opacity: 0.7,
             interactive: false
         }).addTo(map);
-        
-        // Show legend
+
+        // Show legend (and remember whether this is the first successful render)
         const legend = document.getElementById('costSurfaceLegend');
+        const isFirstRender = legend.style.display !== 'block';
         legend.style.display = 'block';
         
         // Update info text
@@ -1286,9 +1314,12 @@ async function generateCostSurface() {
             Time: ${metadata.generation_time_s}s
         `;
         
-        // Fit map to cost surface bounds
-        map.fitBounds(imgBounds);
-        
+        // Only recenter on the FIRST generation — preserve the user's
+        // current view when they scrub sliders to compare surfaces.
+        if (isFirstRender) {
+            map.fitBounds(imgBounds);
+        }
+
         console.log('✅ Cost surface displayed on map');
         
     } catch (error) {

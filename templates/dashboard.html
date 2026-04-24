@@ -8,8 +8,8 @@
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
-    <!-- Chart.js for graphical analysis -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Chart.js for graphical analysis (vendored locally to avoid CDN blocks) -->
+    <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
@@ -262,30 +262,6 @@
             <main class="map-container">
                 <div id="map"></div>
                 
-                <!-- QGIS-style Toolbar -->
-                <div class="qgis-toolbar" style="position: absolute; top: 10px; left: 60px; z-index: 1000; background: white; padding: 5px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; gap: 5px;">
-                    <!-- Navigation Tools -->
-                    <button id="panTool" class="qgis-btn" title="Pan Map" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🖱️ Pan</button>
-                    <button id="zoomInTool" class="qgis-btn" title="Zoom In" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🔍+ Zoom In</button>
-                    <button id="zoomOutTool" class="qgis-btn" title="Zoom Out" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🔍- Zoom Out</button>
-                    <button id="zoomToLayerBtn" class="qgis-btn" title="Zoom to Layer" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">📐 Zoom to Layer</button>
-                    
-                    <!-- Measurement Tools -->
-                    <button id="measureDistance" class="qgis-btn" title="Measure Distance" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">📏 Measure Distance</button>
-                    <button id="measureArea" class="qgis-btn" title="Measure Area" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">📐 Measure Area</button>
-                    
-                    <!-- Analysis Tools -->
-                    <button id="profileTool" class="qgis-btn" title="Elevation Profile" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">📊 Elevation Profile</button>
-                    <button id="bufferTool" class="qgis-btn" title="Buffer Analysis" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🔵 Buffer</button>
-                    
-                    <!-- Export Tools -->
-                    <button id="printMap" class="qgis-btn" title="Print Map" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🖨️ Print</button>
-                    <button id="exportMapImage" class="qgis-btn" title="Export Map as Image" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">📸 Export Image</button>
-                    
-                    <!-- Layer Panel Toggle -->
-                    <button id="toggleLayerPanel" class="qgis-btn" title="Toggle Layer Panel" style="padding: 5px 8px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; cursor: pointer;">🗂️ Layers</button>
-                </div>
-                
                 <!-- Coordinate Display (QGIS-style status bar) -->
                 <div class="qgis-statusbar" style="position: absolute; bottom: 10px; left: 10px; right: 10px; z-index: 1000; background: rgba(255,255,255,0.9); padding: 5px 10px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
                     <div id="coordinateDisplay">
@@ -370,15 +346,6 @@
                         
                         <button id="clearLayers" style="margin-top: 10px; padding: 5px 10px; font-size: 10px; background: #f44336; color: white; border: none; border-radius: 3px; cursor: pointer; width: 100%;">Clear All Layers</button>
                     </div>
-                </div>
-                
-                <!-- Layer Panel (QGIS-style) -->
-                <div class="layer-panel" style="position: absolute; top: 10px; right: 10px; z-index: 1000; background: white; padding: 10px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); width: 250px; max-height: 400px; overflow-y: auto; display: none;">
-                    <h4 style="margin: 0 0 10px 0; padding-bottom: 5px; border-bottom: 1px solid #eee;">🗂️ Layer Management</h4>
-                    <div id="layerTree">
-                        <!-- Layers will be populated dynamically -->
-                    </div>
-                    <button id="closeLayerPanel" style="margin-top: 10px; padding: 3px 8px; background: #666; color: white; border: none; border-radius: 3px; cursor: pointer; width: 100%;">Close</button>
                 </div>
                 
                 <!-- Attribute Table Panel -->

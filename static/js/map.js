@@ -576,8 +576,7 @@ function setStartPoint(lat, lng) {
         updateStartCoords(pos.lat, pos.lng);
     });
 
-    currentProject.start = { lat, lon: lng, name: 'Start Point' };
-    updatePointLabels();
+    updateStartCoords(lat, lng);
 }
 
 /**
@@ -607,16 +606,69 @@ function setEndPoint(lat, lng) {
         updateEndCoords(pos.lat, pos.lng);
     });
 
-    currentProject.end = { lat, lon: lng, name: 'End Point' };
-    updatePointLabels();
+    updateEndCoords(lat, lng);
 }
 
 /**
- * Set waypoint location
+ * Set waypoint location — updates the shared `waypoints` array (declared in
+ * optimize.js), drops a draggable violet marker on the map, and refreshes
+ * the sidebar list so coordinates appear instead of "Not set".
  */
 function setWaypointLocation(waypointId, lat, lng) {
-    // Implementation depends on your waypoint system
-    console.log(`Waypoint ${waypointId} set to:`, lat, lng);
+    if (typeof waypoints === 'undefined') {
+        console.warn('waypoints array not available');
+        return;
+    }
+    const wp = waypoints.find(w => w.id === waypointId);
+    if (!wp) {
+        console.warn(`Waypoint ${waypointId} not found`);
+        return;
+    }
+    wp.lat = lat;
+    wp.lon = lng;
+
+    // Replace any existing marker for this waypoint id
+    removeWaypointMarker(waypointId);
+
+    const violetIcon = L.icon({
+        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+        shadowSize: [41, 41]
+    });
+
+    const marker = L.marker([lat, lng], { icon: violetIcon, draggable: true })
+        .addTo(map)
+        .bindPopup(`<b>${wp.name}</b><br>Lat: ${lat.toFixed(4)}, Lon: ${lng.toFixed(4)}`)
+        .openPopup();
+
+    marker.on('dragend', function(e) {
+        const pos = e.target.getLatLng();
+        const target = waypoints.find(w => w.id === waypointId);
+        if (target) {
+            target.lat = pos.lat;
+            target.lon = pos.lng;
+            marker.setPopupContent(`<b>${target.name}</b><br>Lat: ${pos.lat.toFixed(4)}, Lon: ${pos.lng.toFixed(4)}`);
+        }
+        if (typeof renderWaypoints === 'function') renderWaypoints();
+    });
+
+    waypointMarkers[waypointId] = marker;
+
+    if (typeof renderWaypoints === 'function') renderWaypoints();
+}
+
+/**
+ * Remove a waypoint marker from the map (called by removeWaypoint in optimize.js)
+ */
+function removeWaypointMarker(waypointId) {
+    const existing = waypointMarkers[waypointId];
+    if (existing) {
+        map.removeLayer(existing);
+        delete waypointMarkers[waypointId];
+    }
 }
 
 /**

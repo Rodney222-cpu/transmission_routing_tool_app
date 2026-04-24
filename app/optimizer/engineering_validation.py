@@ -2,6 +2,7 @@
 Engineering Validation Module for 400kV Lattice Tower Transmission Lines
 Validates routes against technical constraints specific to Uganda case study
 """
+import bisect
 import numpy as np
 from typing import List, Tuple, Dict
 
@@ -20,9 +21,9 @@ class EngineeringValidator:
             config: Flask app configuration object
         """
         self.config = config
-        self.min_span = config.get('MIN_TOWER_SPAN', 200)  # 200m
+        self.min_span = config.get('MIN_TOWER_SPAN', 300)  # 300m
         self.max_span = config.get('MAX_TOWER_SPAN', 450)  # 450m
-        self.typical_span = config.get('TYPICAL_TOWER_SPAN', 350)  # 350m
+        self.typical_span = config.get('TYPICAL_TOWER_SPAN', 375)  # 375m
         self.max_slope = config.get('MAX_SLOPE_ANGLE', 30)  # 30 degrees
         self.min_clearance = config.get('MIN_GROUND_CLEARANCE', 7.6)  # 7.6m
         self.corridor_width = config.get('TOTAL_CORRIDOR_WIDTH', 60)  # 60m
@@ -339,40 +340,82 @@ class EngineeringValidator:
     def generate_tower_positions(self, coords: List[Tuple[float, float]],
                                 target_span: float = None) -> List[Tuple[float, float]]:
         """
-        Generate optimal tower positions along the route
+        Generate optimal tower positions by interpolating along the route
+        polyline at uniform spans within [min_span, max_span].
+
+        The route length L is split into N equal spans where N is chosen so
+        that the actual span (L / N) lies inside the permitted operating
+        range. Towers are then placed by linear interpolation between the
+        surrounding route vertices, so every tower sits exactly on the
+        optimal route.
 
         Args:
             coords: List of (lon, lat) coordinates defining the route
-            target_span: Target span distance in meters (default: typical_span)
+            target_span: Preferred span in meters (default: typical_span).
+                Will be clamped to [min_span, max_span].
 
         Returns:
             List of (lon, lat) coordinates for tower positions
         """
+        if not coords:
+            return []
+        if len(coords) == 1:
+            return [coords[0]]
+
         if target_span is None:
             target_span = self.typical_span
+        target_span = max(self.min_span, min(self.max_span, float(target_span)))
 
-        tower_positions = [coords[0]]  # Start with first point
-
-        accumulated_distance = 0
-        last_tower_idx = 0
-
+        # Cumulative arc length along the polyline (meters).
+        cum = [0.0]
         for i in range(1, len(coords)):
-            # Calculate distance from last tower
-            segment_dist = self._haversine_distance(
-                coords[i-1][1], coords[i-1][0],
+            d = self._haversine_distance(
+                coords[i - 1][1], coords[i - 1][0],
                 coords[i][1], coords[i][0]
             )
-            accumulated_distance += segment_dist
+            cum.append(cum[-1] + d)
+        total_length = cum[-1]
 
-            # Place tower if we've exceeded target span
-            if accumulated_distance >= target_span:
-                tower_positions.append(coords[i])
-                accumulated_distance = 0
-                last_tower_idx = i
+        # Degenerate / very short routes: just keep the two endpoints.
+        if total_length <= self.min_span:
+            return [coords[0], coords[-1]]
 
-        # Always include the end point
-        if coords[-1] not in tower_positions:
-            tower_positions.append(coords[-1])
+        # Pick N so that the uniform span L/N lies inside [min_span, max_span].
+        # The permissible integer range is
+        #     n_min = ceil(L / max_span)   # enough towers so no span > max
+        #     n_max = floor(L / min_span)  # few enough towers so no span < min
+        # Within that range we prefer N closest to round(L / target_span).
+        # If the range is empty (very short routes where one count overshoots
+        # max_span and the next undershoots min_span), we pick n_min so that
+        # span <= max_span is preserved — this is the safer choice for
+        # electrical clearance on 400 kV lines.
+        n_min = max(1, int(np.ceil(total_length / self.max_span)))
+        n_max = max(1, int(np.floor(total_length / self.min_span)))
+        if n_min > n_max:
+            n_spans = n_min
+        else:
+            n_preferred = max(1, int(round(total_length / target_span)))
+            n_spans = max(n_min, min(n_max, n_preferred))
+        actual_span = total_length / n_spans
+
+        def _interpolate(arc_s: float) -> Tuple[float, float]:
+            """Point on the polyline at cumulative arc length arc_s (meters)."""
+            if arc_s <= 0.0:
+                return coords[0]
+            if arc_s >= total_length:
+                return coords[-1]
+            # bisect_right returns the first index j with cum[j] > arc_s
+            j = bisect.bisect_right(cum, arc_s)
+            seg_len = cum[j] - cum[j - 1]
+            t = (arc_s - cum[j - 1]) / seg_len if seg_len > 0 else 0.0
+            lon = coords[j - 1][0] + t * (coords[j][0] - coords[j - 1][0])
+            lat = coords[j - 1][1] + t * (coords[j][1] - coords[j - 1][1])
+            return (lon, lat)
+
+        tower_positions = [coords[0]]
+        for k in range(1, n_spans):
+            tower_positions.append(_interpolate(k * actual_span))
+        tower_positions.append(coords[-1])
 
         return tower_positions
 

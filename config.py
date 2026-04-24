@@ -76,10 +76,12 @@ class Config:
     MAX_TOWER_SPAN_DIFFICULT = 300  # meters (difficult terrain)
     MIN_TOWER_SPAN_FLAT = 300  # meters (flat terrain)
     MAX_TOWER_SPAN_FLAT = 450  # meters (flat terrain)
-    TYPICAL_TOWER_SPAN = 350  # meters
+    TYPICAL_TOWER_SPAN = 375  # meters (midpoint of the 300-450m operating range)
 
-    # Legacy values for backward compatibility
-    MIN_TOWER_SPAN = 250  # meters
+    # Operating span range used by tower placement and validation.
+    # Towers are interpolated along the optimal route so that every span
+    # falls within [MIN_TOWER_SPAN, MAX_TOWER_SPAN].
+    MIN_TOWER_SPAN = 300  # meters
     MAX_TOWER_SPAN = 450  # meters
 
     # Terrain classification thresholds

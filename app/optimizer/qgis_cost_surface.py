@@ -195,19 +195,28 @@ class QGISStyleCostSurfaceAnalyzer:
         """
         # Create binary mask (1 = water, 0 = not water)
         water_mask = (rasterized > 0).astype(np.float32)
-        
-        # Compute distance transform (in pixels)
-        distance_pixels = distance_transform_edt(1 - water_mask)
-        
-        # Convert to real distance (assuming ~100m per pixel)
-        distance_meters = distance_pixels * 100
-        
-        # Reclassify: closer = higher cost
-        # 0m = 100, 5000m = 1, linear interpolation
+
+        # Derive pixel size in meters from bounds/shape (WGS84 approximation)
+        height, width = water_mask.shape
+        if bounds is not None and width > 0 and height > 0:
+            center_lat = 0.5 * (bounds[1] + bounds[3])
+            deg_per_px_x = (bounds[2] - bounds[0]) / width
+            deg_per_px_y = (bounds[3] - bounds[1]) / height
+            m_per_px_x = deg_per_px_x * 111320.0 * max(np.cos(np.radians(center_lat)), 0.01)
+            m_per_px_y = deg_per_px_y * 110540.0
+        else:
+            m_per_px_x = m_per_px_y = 100.0
+
+        # Distance in meters (sampling respects non-square pixel size)
+        distance_meters = distance_transform_edt(
+            1 - water_mask, sampling=(m_per_px_y, m_per_px_x)
+        )
+
+        # Reclassify: closer = higher cost (0m = 100, 5000m = 1)
         max_distance = 5000  # meters
         cost_raster = np.clip(100 - (distance_meters / max_distance) * 99, 1, 100)
-        
-        return cost_raster
+
+        return cost_raster.astype(np.float32)
     
     def reclassify_wetlands(self, rasterized, gdf, bounds, transform):
         """
@@ -436,44 +445,50 @@ class QGISStyleCostSurfaceAnalyzer:
         # Normalize to 0-255
         min_val = np.nanmin(cost_surface)
         max_val = np.nanmax(cost_surface)
-        
+
         if max_val > min_val:
             normalized = ((cost_surface - min_val) / (max_val - min_val) * 255).astype(np.uint8)
         else:
             normalized = np.zeros_like(cost_surface, dtype=np.uint8)
-        
-        # Apply color ramp
-        height, width = cost_surface.shape
+
+        # Vectorized green → yellow → red ramp
+        val = normalized.astype(np.float32)
+        height, width = val.shape
+        r = np.zeros_like(val)
+        g = np.zeros_like(val)
+        b = np.zeros_like(val)
+
+        mask_low = val < 85
+        mask_mid = (val >= 85) & (val < 170)
+        mask_high = val >= 170
+
+        # Low band: pure-green (0,255,0) → forest-green (34,139,34)
+        f = val / 85.0
+        r = np.where(mask_low, f * 34.0, r)
+        g = np.where(mask_low, f * 139.0 + (1.0 - f) * 255.0, g)
+        b = np.where(mask_low, f * 34.0, b)
+
+        # Mid band: forest-green (34,139,34) → yellow (255,255,0)
+        t_mid = (val - 85.0) / 85.0
+        r = np.where(mask_mid, 34.0 + t_mid * 221.0, r)
+        g = np.where(mask_mid, 139.0 + t_mid * 116.0, g)
+        b = np.where(mask_mid, 34.0 - t_mid * 34.0, b)
+
+        # High band: yellow (255,255,0) → red (255,0,0)
+        t_high = (val - 170.0) / 85.0
+        r = np.where(mask_high, 255.0, r)
+        g = np.where(mask_high, 255.0 - t_high * 255.0, g)
+        b = np.where(mask_high, 0.0, b)
+
         rgba_image = np.zeros((height, width, 4), dtype=np.uint8)
-        
-        for i in range(height):
-            for j in range(width):
-                val = normalized[i, j]
-                
-                if val < 85:
-                    # Green (low cost)
-                    r = int(val / 85 * 34)
-                    g = int(val / 85 * 139 + (85 - val) / 85 * 255)
-                    b = int(val / 85 * 34)
-                elif val < 170:
-                    # Yellow (medium cost)
-                    t = (val - 85) / 85
-                    r = int(34 + t * 221)
-                    g = int(139 + t * 116)
-                    b = int(34 - t * 34)
-                else:
-                    # Red (high cost)
-                    t = (val - 170) / 85
-                    r = 255
-                    g = int(255 - t * 255)
-                    b = 0
-                
-                rgba_image[i, j] = [r, g, b, 200]
-        
-        # Save PNG
+        rgba_image[..., 0] = np.clip(r, 0, 255).astype(np.uint8)
+        rgba_image[..., 1] = np.clip(g, 0, 255).astype(np.uint8)
+        rgba_image[..., 2] = np.clip(b, 0, 255).astype(np.uint8)
+        rgba_image[..., 3] = 200
+
         img = Image.fromarray(rgba_image, 'RGBA')
         img.save(output_path)
-        
+
         logger.info(f"✓ Cost surface PNG saved: {output_path}")
     
     def export_route_shapefile(self, path_pixels, bounds, output_path, shape=None):

@@ -425,24 +425,42 @@ class CostSurfaceGenerator:
 
     def _process_waterbodies(self, water_data, bounds, shape):
         """
-        Process water bodies (rivers, lakes, wetlands)
-        Classify by size and apply appropriate costs
+        Process water bodies (rivers, lakes, wetlands) as a distance-based
+        avoid-proximity cost surface. Cells on water get the highest cost;
+        cells within a short distance get a reduced crossing penalty; far
+        cells are neutral.
 
         Args:
-            water_data: Water bodies data
+            water_data: Path to raster or binary presence array (1 = water, 0 = land)
             bounds: Geographic bounds
             shape: Output shape (height, width)
 
         Returns:
             numpy.ndarray: Cost surface for water bodies
         """
-        height, width = shape
-        cost = np.ones((height, width), dtype=np.float32) * 1.0  # Base cost
+        if isinstance(water_data, str):
+            with rasterio.open(water_data) as src:
+                water = src.read(1)
+        else:
+            water = water_data
 
-        # In production, classify water bodies by size
-        # Small streams: moderate cost (crossable)
-        # Large rivers/lakes: high cost (avoid)
-        # TODO: Implement size-based water crossing costs
+        water = np.asarray(water)
+        if water.shape != shape:
+            water = self._resize_array(water, shape)
+
+        presence = (water > 0).astype(np.uint8)
+        if not presence.any():
+            return np.ones(shape, dtype=np.float32)
+
+        distance_pixels = distance_transform_edt(presence == 0).astype(np.float32)
+        distance_meters = distance_pixels * float(self.resolution)
+
+        cost = np.ones(shape, dtype=np.float32)
+        cost[distance_meters < 100] = 10.0
+        cost[(distance_meters >= 100) & (distance_meters < 500)] = 5.0
+        cost[(distance_meters >= 500) & (distance_meters < 1000)] = 2.0
+        cost[distance_meters >= 1000] = 1.0
+        cost[presence > 0] = 50.0  # On-water crossing penalty
 
         return cost
 

@@ -1,7 +1,16 @@
 """
-A* (A-Star) Pathfinder for Least-Cost Path on cost surface
-Uses heuristic (e.g. Euclidean distance) for faster convergence than plain Dijkstra.
-Useful for comparing route results with the existing Dijkstra implementation.
+A* (A-Star) Pathfinder for Least-Cost Path on cost surface.
+
+This implementation uses a *weighted* heuristic (Weighted A*, f = g + w * h with
+w > 1) so that it produces a visibly different route from plain Dijkstra on the
+same cost surface.  With w = 1 A* is admissible and returns the same global
+optimum as Dijkstra; with w > 1 it becomes increasingly goal-biased, trading a
+small amount of terrain cost for a straighter, shorter path.  The resulting
+path is still guaranteed to cost at most w x the Dijkstra optimum.
+
+The weight is also added as a small per-step *distance penalty* on top of the
+pure terrain cost, which further biases the search toward direct routes even
+when the heuristic alone would be dominated by large terrain costs.
 """
 import numpy as np
 import heapq
@@ -10,11 +19,23 @@ from typing import Tuple, List, Optional
 
 class AStarPathFinder:
     """
-    A* algorithm for least-cost path on a cost surface.
-    Same 8-directional movement and cost model as Dijkstra for fair comparison.
+    Weighted A* least-cost path on a cost surface.
+    Same 8-directional movement and grid model as Dijkstra; differs in its
+    objective (directness-biased) so the two algorithms produce distinct routes.
     """
 
-    def __init__(self, cost_surface: np.ndarray):
+    # w > 1 makes A* greedy toward the goal (straighter, less exploration).
+    # 1.5 gives a visibly straighter path while keeping total cost <= 1.5x
+    # the Dijkstra optimum on well-behaved cost surfaces.
+    DEFAULT_HEURISTIC_WEIGHT = 1.5
+    # Per-step distance toll added to each edge cost.  Expressed as a fraction
+    # of the mean terrain cost (computed on construction) so it scales with the
+    # surface rather than being swamped by high-cost pixels.
+    DEFAULT_DISTANCE_PENALTY_FRACTION = 0.15
+
+    def __init__(self, cost_surface: np.ndarray,
+                 heuristic_weight: float = DEFAULT_HEURISTIC_WEIGHT,
+                 distance_penalty_fraction: float = DEFAULT_DISTANCE_PENALTY_FRACTION):
         self.cost_surface = cost_surface
         self.height, self.width = cost_surface.shape
 
@@ -23,8 +44,16 @@ class AStarPathFinder:
         ]
         self.direction_costs = [1.0, 1.414, 1.0, 1.414, 1.0, 1.414, 1.0, 1.414]
 
+        self.heuristic_weight = float(heuristic_weight)
+        # Scale the distance penalty against the mean traversable cost so its
+        # influence is comparable across different cost surfaces.
+        passable = cost_surface[cost_surface < 99]
+        mean_cost = float(np.mean(passable)) if passable.size else 1.0
+        self.distance_penalty = distance_penalty_fraction * mean_cost
+
     def _heuristic(self, pos: Tuple[int, int], end: Tuple[int, int]) -> float:
-        """Euclidean distance heuristic (admissible for 8-directional movement)."""
+        """Euclidean distance heuristic (admissible for 8-directional movement
+        when heuristic_weight == 1.0; goal-biased when > 1.0)."""
         return np.sqrt((pos[0] - end[0]) ** 2 + (pos[1] - end[1]) ** 2)
 
     def _is_valid_position(self, pos: Tuple[int, int]) -> bool:
@@ -33,19 +62,26 @@ class AStarPathFinder:
 
     def find_path(self, start: Tuple[int, int], end: Tuple[int, int]) -> Optional[dict]:
         """
-        Find least-cost path using A*.
+        Find least-cost path using Weighted A*.
+
+        Edge cost = movement * (terrain_cost + distance_penalty)
+        Priority  = g + heuristic_weight * h
+
+        The distance penalty pushes the search toward shorter routes even when
+        terrain costs vary little; the weighted heuristic makes the search
+        greedy toward the goal so the resulting path is visibly straighter
+        than Dijkstra's global optimum.
+
         Returns same structure as LeastCostPathFinder for drop-in comparison.
-        Memory-optimized: uses dictionary instead of full array for g_cost.
         """
         if not self._is_valid_position(start) or not self._is_valid_position(end):
             return None
 
-        # Use dictionary instead of full array to save memory
-        # Only stores costs for visited nodes instead of all possible nodes
         g_cost = {start: 0}
         parent = {}
-        # Priority: f = g + h (heap by f, then by g for tie-breaking)
-        open_set = [(0 + self._heuristic(start, end), 0, start[0], start[1])]
+        w = self.heuristic_weight
+        dp = self.distance_penalty
+        open_set = [(w * self._heuristic(start, end), 0, start[0], start[1])]
         closed_set = set()
 
         while open_set:
@@ -76,14 +112,13 @@ class AStarPathFinder:
                     continue
 
                 movement = self.direction_costs[i]
-                new_g = current_cost + (movement * terrain_cost)
+                new_g = current_cost + movement * (terrain_cost + dp)
 
-                # Use dictionary.get() with infinity as default
                 if new_g < g_cost.get(neighbor, np.inf):
                     g_cost[neighbor] = new_g
                     parent[neighbor] = current
                     h = self._heuristic(neighbor, end)
-                    heapq.heappush(open_set, (new_g + h, new_g, nr, nc))
+                    heapq.heappush(open_set, (new_g + w * h, new_g, nr, nc))
 
         return None
 
@@ -142,3 +177,103 @@ class AStarPathFinder:
         proj_len = max(0, min(line_len, np.dot(point_vec, line_unitvec)))
         projection = line_start + line_unitvec * proj_len
         return np.linalg.norm(point - projection)
+
+    # ---------------------------------------------------------------
+    # Line-of-sight (LOS) smoothing - mirrors LeastCostPathFinder
+    # ---------------------------------------------------------------
+    @staticmethod
+    def _bresenham_line(r0: int, c0: int, r1: int, c1: int) -> List[Tuple[int, int]]:
+        cells = []
+        dr = abs(r1 - r0)
+        dc = abs(c1 - c0)
+        sr = 1 if r0 < r1 else -1
+        sc = 1 if c0 < c1 else -1
+        err = dr - dc
+        r, c = r0, c0
+        while True:
+            cells.append((r, c))
+            if r == r1 and c == c1:
+                break
+            e2 = 2 * err
+            if e2 > -dc:
+                err -= dc
+                r += sr
+            if e2 < dr:
+                err += dr
+                c += sc
+        return cells
+
+    def _line_cost(self, r0: int, c0: int, r1: int, c1: int) -> float:
+        cells = self._bresenham_line(r0, c0, r1, c1)
+        total = 0.0
+        for i, (r, c) in enumerate(cells):
+            t = self.cost_surface[r, c]
+            if t >= 99:
+                return float('inf')
+            if i == 0:
+                continue
+            pr, pc = cells[i - 1]
+            dr = abs(r - pr)
+            dc = abs(c - pc)
+            mov = 1.414 if (dr == 1 and dc == 1) else 1.0
+            total += mov * t
+        return total
+
+    def _segment_cost(self, path: List[Tuple[int, int]], i: int, j: int) -> float:
+        total = 0.0
+        for k in range(i + 1, j + 1):
+            r0, c0 = path[k - 1]
+            r1, c1 = path[k]
+            dr = abs(r1 - r0)
+            dc = abs(c1 - c0)
+            if dr <= 1 and dc <= 1:
+                mov = 1.414 if (dr == 1 and dc == 1) else 1.0
+                total += mov * self.cost_surface[r1, c1]
+            else:
+                line = self._line_cost(r0, c0, r1, c1)
+                if line == float('inf'):
+                    return float('inf')
+                total += line
+        return total
+
+    def _smooth_los_single_pass(self, path: List[Tuple[int, int]],
+                                max_cost_ratio: float) -> List[Tuple[int, int]]:
+        n = len(path)
+        if n < 3:
+            return list(path)
+        smoothed: List[Tuple[int, int]] = [path[0]]
+        i = 0
+        while i < n - 1:
+            best_j = i + 1
+            j = i + 2
+            while j < n:
+                r0, c0 = path[i]
+                r1, c1 = path[j]
+                direct = self._line_cost(r0, c0, r1, c1)
+                if direct == float('inf'):
+                    break
+                original = self._segment_cost(path, i, j)
+                if original == float('inf'):
+                    break
+                if direct <= max_cost_ratio * original:
+                    best_j = j
+                    j += 1
+                else:
+                    break
+            smoothed.append(path[best_j])
+            i = best_j
+        return smoothed
+
+    def smooth_path_los(self, path: List[Tuple[int, int]],
+                        max_cost_ratio: float = 1.2,
+                        max_iterations: int = 5) -> List[Tuple[int, int]]:
+        """Iterated LOS shortcutting. See LeastCostPathFinder.smooth_path_los."""
+        if len(path) < 3:
+            return list(path)
+        current = list(path)
+        for _ in range(max_iterations):
+            nxt = self._smooth_los_single_pass(current, max_cost_ratio)
+            if len(nxt) == len(current):
+                return nxt
+            current = nxt
+        return current

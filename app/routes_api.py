@@ -146,7 +146,8 @@ def _run_pathfinder(cost_surface, bounds, route_points, algorithm, resolution_m=
         else:
             pathfinder = LeastCostPathFinder(cost_surface)
 
-        all_paths = []
+        all_paths = []          # smoothed (sparse) vertices — for display/validation
+        all_paths_dense = []    # raw grid pixels — for per-pixel avoidance metrics
         total_cost = 0
         for i in range(len(route_points) - 1):
             segment_start_pixel = _geo_to_pixel(
@@ -160,13 +161,25 @@ def _run_pathfinder(cost_surface, bounds, route_points, algorithm, resolution_m=
             segment_result = pathfinder.find_path(segment_start_pixel, segment_end_pixel)
             if segment_result is None:
                 return None, None, None
+
+            raw_segment = segment_result['path']
+            # Smooth per-segment so waypoints stay anchored (endpoints are preserved)
+            smoothed_segment = pathfinder.smooth_path_los(raw_segment)
+
             if i == 0:
-                all_paths.extend(segment_result['path'])
+                all_paths.extend(smoothed_segment)
+                all_paths_dense.extend(raw_segment)
             else:
-                all_paths.extend(segment_result['path'][1:])
+                all_paths.extend(smoothed_segment[1:])
+                all_paths_dense.extend(raw_segment[1:])
             total_cost += segment_result['total_cost']
 
-        path_result = {'path': all_paths, 'total_cost': total_cost, 'distance': len(all_paths)}
+        path_result = {
+            'path': all_paths,
+            'path_dense': all_paths_dense,
+            'total_cost': total_cost,
+            'distance': len(all_paths_dense),
+        }
         path_coords = pathfinder.path_to_coordinates(path_result['path'], bounds, resolution_m)
         return path_result, path_coords, pathfinder
     except MemoryError as e:
@@ -336,8 +349,11 @@ def optimize_route(project_id):
         if not layers_data:
             layers_data = _create_demo_layers(bounds, current_app.config, shape)
 
+        cs_weights = _normalize_ahp_weights_for_cost_surface(ahp_weights)
+        print(f"⚖️  AHP slider weights (frontend): {ahp_weights}")
+        print(f"⚖️  Cost-surface weights (backend): {cs_weights}")
         cost_surface, metadata = cost_generator.generate_composite_cost_surface(
-            bounds, ahp_weights, layers_data, resolution=resolution_m, grid_shape=shape
+            bounds, cs_weights, layers_data, resolution=resolution_m, grid_shape=shape
         )
         cost_surface = np.asarray(cost_surface, dtype=np.float32)
         metadata = metadata or {}
@@ -464,7 +480,11 @@ def optimize_route(project_id):
         if resolution_m > 30:
             message += f' (resolution adjusted to {resolution_m:.0f}m for large area)'
 
-        avoidance_metrics = _compute_avoidance_metrics(layers_data, path_result['path'], shape)
+        avoidance_metrics = _compute_avoidance_metrics(
+            layers_data,
+            path_result.get('path_dense', path_result['path']),
+            shape,
+        )
 
         response = {
             'message': message,
@@ -644,274 +664,184 @@ def get_gis_layer(layer_name):
 @login_required
 def generate_cost_surface():
     """
-    Generate cost surface based on user-selected layers and weights
-    
+    Generate a QGIS-style cost surface / suitability map from user-selected
+    layers and slider weights. Each slider is applied as an independent weight
+    (no collapsing into AHP super-categories) so moving any single slider
+    visibly changes the output.
+
     Expected JSON body:
     {
         "layers": {
             "protected_areas": {"enabled": true, "weight": 0.15},
-            "rivers": {"enabled": true, "weight": 0.15},
-            "wetlands": {"enabled": true, "weight": 0.15},
-            "roads": {"enabled": true, "weight": 0.10},
-            "elevation": {"enabled": true, "weight": 0.15},
-            "lakes": {"enabled": true, "weight": 0.15},
-            "settlements": {"enabled": true, "weight": 0.15},
-            "land_use": {"enabled": true, "weight": 0.15}
+            "rivers":          {"enabled": true, "weight": 0.15},
+            "wetlands":        {"enabled": true, "weight": 0.10},
+            "roads":           {"enabled": true, "weight": 0.10},
+            "elevation":       {"enabled": true, "weight": 0.15},
+            "lakes":           {"enabled": true, "weight": 0.10},
+            "settlements":     {"enabled": true, "weight": 0.15},
+            "land_use":        {"enabled": true, "weight": 0.10}
         },
-        "bounds": [29.5, 0.5, 35.0, 4.5],
+        "bounds": [min_lon, min_lat, max_lon, max_lat],
         "resolution_m": 100
     }
     """
     try:
-        from app.optimizer.cost_surface import CostSurfaceGenerator
-        from app.services.gis_data_loader import load_layers_for_bounds
-        from app.services.uganda_gis_loader import UgandaGISLoader
-        import time
-        import geopandas as gpd
-        from shapely.geometry import box, Point
-        
-        # Get request data
-        data = request.get_json() or {}
-        layers_config = data.get('layers', {})
-        
-        # Extract only enabled layers and normalize weights
-        enabled_layers = {}
-        total_weight = 0
-        
-        for layer_name, config in layers_config.items():
-            if config.get('enabled', False):
-                weight = config.get('weight', 0)
-                if weight > 0:
-                    enabled_layers[layer_name] = weight
-                    total_weight += weight
-        
-        # Normalize weights to sum to 1.0
-        if total_weight > 0:
-            ahp_weights = {k: v / total_weight for k, v in enabled_layers.items()}
-        else:
-            # Fallback to default weights if no layers enabled
-            ahp_weights = current_app.config['DEFAULT_AHP_WEIGHTS']
-        
-        # Map layer names to what the cost surface generator expects
-        weight_mapping = {
-            'protected_areas': 'protected_areas',
-            'rivers': 'water',  # Rivers go into water category
-            'wetlands': 'water',  # Wetlands go into water category
-            'roads': 'roads',
-            'elevation': 'topography',
-            'lakes': 'water',  # Lakes go into water category
-            'settlements': 'settlements',
-            'land_use': 'land_use'
-        }
-        
-        # Convert to AHP weights format
-        final_weights = {
-            'protected_areas': 0,
-            'topography': 0,
-            'land_use': 0,
-            'settlements': 0,
-            'water': 0,
-            'roads': 0,
-            'vegetation': 0,
-            'public_infrastructure': 0
-        }
-        
-        for layer_name, weight in ahp_weights.items():
-            ahp_category = weight_mapping.get(layer_name)
-            if ahp_category:
-                final_weights[ahp_category] += weight
-        
-        print(f"🎨 Generating cost surface with user-selected layers...")
-        print(f"   Enabled layers: {list(enabled_layers.keys())}")
-        print(f"   Original weights: {ahp_weights}")
-        print(f"   AHP weights: {final_weights}")
-        
-        # Default to Uganda bounds if not provided
-        bounds = data.get('bounds', [29.5, 0.5, 35.0, 4.5])
-        min_lon, min_lat, max_lon, max_lat = bounds
-        
-        # Auto-calculate resolution based on area size
-        lon_span = max_lon - min_lon
-        lat_span = max_lat - min_lat
-        approx_distance_km = max(lon_span, lat_span) * 111
-        
-        # Start with 100m resolution for visualization (faster than 30m)
-        resolution_m = data.get('resolution_m', None)
-        if resolution_m is None:
-            if approx_distance_km > 200:
-                resolution_m = 200
-            elif approx_distance_km > 100:
-                resolution_m = 100
-            else:
-                resolution_m = 50
-        
-        print(f"   Bounds: {bounds}")
-        print(f"   Resolution: {resolution_m}m")
-        
-        # Calculate raster shape
-        shape = _shape_from_bounds(bounds, resolution_m=resolution_m)
-        height, width = shape
-        total_pixels = height * width
-        
-        print(f"   Raster size: {width} × {height} = {total_pixels:,} pixels")
-        
-        # Load GIS layers
-        start_time = time.time()
-        try:
-            layers_data = load_layers_for_bounds(current_app.config, tuple(bounds), shape)
-        except Exception as e:
-            print(f"⚠️ Error loading real GIS layers: {e}")
-            layers_data = {}
-        
-        if not layers_data:
-            print("⚠️ Falling back to demo data")
-            layers_data = _create_demo_layers(bounds, current_app.config, shape)
-        
-        load_time = time.time() - start_time
-        print(f"✓ Layers loaded in {load_time:.2f}s")
-        print(f"   Available layers: {list(layers_data.keys())}")
-        
-        # Generate cost surface with user's weights
-        start_time = time.time()
-        cost_generator = CostSurfaceGenerator(current_app.config)
-        cost_surface, metadata = cost_generator.generate_composite_cost_surface(
-            bounds, final_weights, layers_data, resolution=resolution_m, grid_shape=shape
-        )
-        gen_time = time.time() - start_time
-        
-        print(f"✓ Cost surface generated in {gen_time:.2f}s")
-        print(f"   Min cost: {metadata['min_cost']:.2f}")
-        print(f"   Max cost: {metadata['max_cost']:.2f}")
-        print(f"   Mean cost: {metadata['mean_cost']:.2f}")
-        
-        # Load Uganda boundary to clip the cost surface
-        print("🗺️ Loading Uganda boundary for clipping...")
-        try:
-            loader = UgandaGISLoader(current_app.config)
-            uganda_geojson = loader.load_layer_geojson('uganda_districts', bounds)
-            
-            if uganda_geojson and len(uganda_geojson.get('features', [])) > 0:
-                # Convert GeoJSON to GeoDataFrame
-                uganda_gdf = gpd.GeoDataFrame.from_features(uganda_geojson['features'])
-                uganda_gdf.crs = 'EPSG:4326'
-                
-                # Merge all districts into single Uganda boundary
-                uganda_boundary = uganda_gdf.unary_union
-                print(f"✓ Uganda boundary loaded successfully")
-            else:
-                print("⚠️ Uganda boundary not available, using full bounds")
-                uganda_boundary = None
-        except Exception as e:
-            print(f"⚠️ Error loading Uganda boundary: {e}")
-            uganda_boundary = None
-        
-        # Convert cost surface to image for visualization
+        from app.optimizer.qgis_cost_surface import QGISStyleCostSurfaceAnalyzer
+        from app.routes_qgis_api import _resolve_layer_path, _LAYER_FOLDER_CONFIG_KEYS
         from PIL import Image
         import io
-        import numpy as np
+        import base64
+        import time
         
-        # Normalize cost surface to match the reference image scale (156-476)
-        # The reference uses: 156-220, 220-284, 284-348, 348-412, 412-476
-        min_val = np.nanmin(cost_surface)
-        max_val = np.nanmax(cost_surface)
+        data = request.get_json() or {}
+        layers_config = data.get('layers', {})
+
+        # Collect only the enabled layers (each slider stays independent)
+        enabled_layers = {
+            name: float(cfg.get('weight', 0) or 0)
+            for name, cfg in layers_config.items()
+            if cfg.get('enabled', False)
+        }
+        if not enabled_layers:
+            return jsonify({
+                'success': False,
+                'error': 'No layers enabled. Select at least one checkbox.',
+            }), 400
+
+        bounds = data.get('bounds', [29.5, 0.5, 35.0, 4.5])
+        min_lon, min_lat, max_lon, max_lat = bounds
+
+        # Raster shape derived from user-requested resolution, capped to a
+        # dimension numpy/scipy can process in ~1-2 seconds.
+        resolution_m = float(data.get('resolution_m') or 100)
+        shape = _shape_from_bounds(bounds, resolution_m=resolution_m)
+        height, width = shape
+
+        # Recover the actual meter resolution after shape capping
+        actual_resolution_m = ((max_lon - min_lon) * 111320.0) / max(width, 1)
+
+        print("🎨 Generating QGIS-style cost surface...")
+        print(f"   Enabled layers: {list(enabled_layers.keys())}")
+        print(f"   Raw weights:    {enabled_layers}")
+        print(f"   Bounds: {bounds}")
+        print(f"   Raster: {width} x {height} @ ~{actual_resolution_m:.1f}m")
         
-        # Map to 156-476 range to match reference
+        # --- Step 1 & 2: rasterize + per-layer reclassification ------------
+        analyzer = QGISStyleCostSurfaceAnalyzer(
+            config=current_app.config, output_dir='static'
+        )
+        layer_reclass = {
+            'protected_areas': analyzer.reclassify_protected_areas,
+            'rivers':          analyzer.reclassify_water_distance,
+            'wetlands':        analyzer.reclassify_wetlands,
+            'lakes':           analyzer.reclassify_water_distance,
+            'land_use':        analyzer.reclassify_land_use,
+            'elevation':       (lambda arr, *a: analyzer.reclassify_elevation_slope(arr)),
+            # Settlements and roads are "avoid proximity" features → same
+            # distance-based logic as water (nearer = higher cost).
+            'settlements':     analyzer.reclassify_water_distance,
+            'roads':           analyzer.reclassify_water_distance,
+        }
+
+        cost_rasters = {}
+        resolved_sources = {}
+        start_time = time.time()
+
+        for layer_name in list(enabled_layers.keys()):
+            folder_key = _LAYER_FOLDER_CONFIG_KEYS.get(layer_name)
+            folder_path = current_app.config.get(folder_key) if folder_key else None
+            path, layer_type = _resolve_layer_path(folder_path)
+            reclass_fn = layer_reclass.get(layer_name)
+
+            if path and layer_type == 'raster':
+                raster = analyzer.prepare_raster_from_raster(
+                    path, bounds, shape, reclass_fn
+                )
+                resolved_sources[layer_name] = os.path.basename(path)
+            elif path and layer_type == 'vector':
+                raster = analyzer.prepare_raster_from_vector(
+                    path, bounds, shape, reclass_fn
+                )
+                resolved_sources[layer_name] = os.path.basename(path)
+            else:
+                print(f"   ⚠ {layer_name}: no file found in {folder_path}")
+                raster = np.full(shape, 50.0, dtype=np.float32)
+                resolved_sources[layer_name] = None
+
+            cost_rasters[layer_name] = raster
+
+        # --- Step 3: normalize weights -----------------------------------
+        normalized_weights = analyzer.normalize_weights(enabled_layers)
+
+        # --- Step 4: weighted overlay ------------------------------------
+        cost_surface = analyzer.compute_weighted_overlay(
+            cost_rasters, normalized_weights
+        )
+        gen_time = time.time() - start_time
+
+        min_val = float(np.nanmin(cost_surface))
+        max_val = float(np.nanmax(cost_surface))
+        mean_val = float(np.nanmean(cost_surface))
+        print(f"✓ Cost surface: min={min_val:.2f} max={max_val:.2f} mean={mean_val:.2f} in {gen_time:.2f}s")
+
+        # --- Vectorized 5-band color ramp (matches dashboard legend) -----
+        # Scale raw cost values into the 156..476 display range used by the
+        # frontend legend so the same tick labels always make sense.
         if max_val > min_val:
-            scaled = 156 + ((cost_surface - min_val) / (max_val - min_val)) * (476 - 156)
+            scaled = 156.0 + ((cost_surface - min_val) / (max_val - min_val)) * (476.0 - 156.0)
         else:
-            scaled = np.full_like(cost_surface, 316.0)  # Middle value
-        
-        # Create RGBA image with exact colors from reference
-        # Green (156-220), Light Green (220-284), Yellow (284-348), Orange (348-412), Red (412-476)
-        rgba_image = np.zeros((height, width, 4), dtype=np.uint8)
-        
-        # Calculate pixel coordinates for each cell
-        lon_per_pixel = (max_lon - min_lon) / width
-        lat_per_pixel = (max_lat - min_lat) / height
-        
-        print("🎨 Applying colors and Uganda boundary mask...")
-        
-        for i in range(height):
-            for j in range(width):
-                # Calculate geographic coordinates for this pixel
-                pixel_lon = min_lon + (j + 0.5) * lon_per_pixel
-                pixel_lat = max_lat - (i + 0.5) * lat_per_pixel
-                
-                # Check if this pixel is within Uganda boundary
-                if uganda_boundary:
-                    point = Point(pixel_lon, pixel_lat)
-                    if not uganda_boundary.contains(point):
-                        # Outside Uganda - make transparent
-                        rgba_image[i, j] = [0, 0, 0, 0]  # Fully transparent
-                        continue
-                
-                # Inside Uganda - apply cost color
-                val = scaled[i, j]
-                
-                # Exact color matching from reference image
-                if val < 220:
-                    # Very Low Cost (156-220): Dark Green
-                    # RGB: (34, 139, 34) - Forest Green
-                    r = 34
-                    g = 139
-                    b = 34
-                elif val < 284:
-                    # Low Cost (220-284): Light Green
-                    # RGB: (144, 238, 144) - Light Green
-                    r = 144
-                    g = 238
-                    b = 144
-                elif val < 348:
-                    # Moderate Cost (284-348): Yellow
-                    # RGB: (255, 255, 0) - Pure Yellow
-                    r = 255
-                    g = 255
-                    b = 0
-                elif val < 412:
-                    # High Cost (348-412): Orange
-                    # RGB: (255, 165, 0) - Orange
-                    r = 255
-                    g = 165
-                    b = 0
-                else:
-                    # Very High Cost (412-476): Red
-                    # RGB: (255, 0, 0) - Pure Red
-                    r = 255
-                    g = 0
-                    b = 0
-                
-                rgba_image[i, j] = [r, g, b, 200]  # Slightly more opaque for better visibility
-        
-        # Create PIL Image
-        img = Image.fromarray(rgba_image, 'RGBA')
-        
-        # Save to bytes
+            scaled = np.full_like(cost_surface, 316.0)
+
+        rgba = np.zeros((height, width, 4), dtype=np.uint8)
+        rgba[..., 3] = 200  # default alpha (per-band overwritten below)
+
+        band_edges = [220.0, 284.0, 348.0, 412.0]
+        band_colors = [
+            (34, 139, 34),    # very low  – forest green
+            (144, 238, 144),  # low       – light green
+            (255, 255, 0),    # moderate  – yellow
+            (255, 165, 0),    # high      – orange
+            (255, 0, 0),      # very high – red
+        ]
+        masks = [
+            scaled < band_edges[0],
+            (scaled >= band_edges[0]) & (scaled < band_edges[1]),
+            (scaled >= band_edges[1]) & (scaled < band_edges[2]),
+            (scaled >= band_edges[2]) & (scaled < band_edges[3]),
+            scaled >= band_edges[3],
+        ]
+        for mask, (r, g, b) in zip(masks, band_colors):
+            rgba[mask, 0] = r
+            rgba[mask, 1] = g
+            rgba[mask, 2] = b
+            rgba[mask, 3] = 200
+
+        img = Image.fromarray(rgba, 'RGBA')
         img_io = io.BytesIO()
         img.save(img_io, 'PNG')
         img_io.seek(0)
-        
-        # Encode image as base64 for JSON response
-        import base64
         img_base64 = base64.b64encode(img_io.read()).decode('utf-8')
-        
+
+        data_source = 'real' if any(resolved_sources.values()) else 'demo'
         return jsonify({
             'success': True,
             'message': 'Cost surface generated successfully',
             'image_base64': img_base64,
             'bounds': bounds,
             'metadata': {
-                'resolution_m': resolution_m,
+                'resolution_m': round(actual_resolution_m, 1),
                 'shape': [height, width],
-                'min_cost': float(metadata['min_cost']),
-                'max_cost': float(metadata['max_cost']),
-                'mean_cost': float(metadata['mean_cost']),
-                'weights': final_weights,
+                'min_cost': min_val,
+                'max_cost': max_val,
+                'mean_cost': mean_val,
+                'weights': normalized_weights,
                 'enabled_layers': list(enabled_layers.keys()),
-                'data_source': 'real' if layers_data else 'demo',
-                'generation_time_s': round(gen_time, 2)
-            }
+                'layer_sources': resolved_sources,
+                'data_source': data_source,
+                'generation_time_s': round(gen_time, 2),
+            },
         })
-        
+
     except Exception as e:
         print(f"❌ Error generating cost surface: {e}")
         import traceback
@@ -1235,6 +1165,38 @@ def get_cost_surface_image(project_id):
     return response
 
 
+def _normalize_ahp_weights_for_cost_surface(weights):
+    """
+    Translate frontend slider keys to the keys that
+    CostSurfaceGenerator.generate_composite_cost_surface actually consumes.
+
+    The UI exposes 8 sliders (protected_areas, rivers, wetlands, roads,
+    elevation, lakes, settlements, land_use) but the backend cost-surface
+    code groups some of those under broader categories:
+        elevation               -> topography
+        rivers, lakes, wetlands -> water   (summed)
+    All other keys pass through unchanged so config-level AHP weights
+    (vegetation, public_infrastructure, cultural_heritage, ...) still work.
+    """
+    if not weights:
+        return {}
+    FRONT_TO_BACK = {
+        'elevation': 'topography',
+        'rivers': 'water',
+        'lakes': 'water',
+        'wetlands': 'water',
+    }
+    normalized = {}
+    for key, value in weights.items():
+        back_key = FRONT_TO_BACK.get(key, key)
+        try:
+            w = float(value or 0.0)
+        except (TypeError, ValueError):
+            w = 0.0
+        normalized[back_key] = normalized.get(back_key, 0.0) + w
+    return normalized
+
+
 def _create_demo_layers(bounds, config, shape=None):
     """
     Create demo GIS layers for testing
@@ -1253,20 +1215,27 @@ def _create_demo_layers(bounds, config, shape=None):
     else:
         height, width = shape
 
-    # Create synthetic layers with memory-efficient dtypes
-    # Synthetic DEM in plausible meters (800–1600 m) when no real SRTM GeoTIFF is present
-    dem = (800.0 + np.random.rand(height, width).astype(np.float32) * 800.0)
-    land_use = np.random.choice([10, 30, 40, 50, 80, 90], size=(height, width)).astype(np.int16)
-    settlements = np.random.choice([0, 1], size=(height, width), p=[0.95, 0.05]).astype(np.int8)
-    protected_areas = np.random.choice([0, 1], size=(height, width), p=[0.9, 0.1]).astype(np.int8)
-    roads = np.random.choice([0, 1], size=(height, width), p=[0.98, 0.02]).astype(np.int8)
+    # Create synthetic layers with memory-efficient dtypes.
+    # Seed the RNG from the bounds so the same area always yields the same
+    # demo terrain. Without this, clicking Optimize twice for the same start
+    # and end would produce a different cost surface - and therefore a
+    # different route - every time.
+    seed = abs(int(sum(v * 1e6 for v in bounds))) & 0x7FFFFFFF
+    rng = np.random.default_rng(seed)
+    dem = (800.0 + rng.random((height, width), dtype=np.float32) * 800.0)
+    land_use = rng.choice([10, 30, 40, 50, 80, 90], size=(height, width)).astype(np.int16)
+    settlements = rng.choice([0, 1], size=(height, width), p=[0.95, 0.05]).astype(np.int8)
+    protected_areas = rng.choice([0, 1], size=(height, width), p=[0.9, 0.1]).astype(np.int8)
+    roads = rng.choice([0, 1], size=(height, width), p=[0.98, 0.02]).astype(np.int8)
+    waterbodies = rng.choice([0, 1], size=(height, width), p=[0.97, 0.03]).astype(np.int8)
 
     return {
         'dem': dem,
         'land_use': land_use,
         'settlements': settlements,
         'protected_areas': protected_areas,
-        'roads': roads
+        'roads': roads,
+        'waterbodies': waterbodies,
     }
 
 
