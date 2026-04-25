@@ -74,26 +74,34 @@
                 
                 <div class="sidebar-section">
                     <h3>Route Points</h3>
-                    <p class="help-text">Set start, way and end points on the map. None are preset.</p>
+                    <p class="help-text">Set start, angle and end points on the map or enter coordinates.</p>
 
                     <div class="point-info">
                         <strong>Start Point</strong>
                         <div id="startCoords">Not set — click "Set Start Point" then click map</div>
+                        <div style="margin-top: 5px; font-size: 11px;">
+                            <input type="number" id="startLat" placeholder="Latitude" step="any" style="width: 45%; padding: 3px; font-size: 10px;" onchange="updateStartFromCoords()">
+                            <input type="number" id="startLon" placeholder="Longitude" step="any" style="width: 45%; padding: 3px; font-size: 10px;" onchange="updateStartFromCoords()">
+                        </div>
                     </div>
 
                     <div class="point-info">
                         <strong>End Point</strong>
                         <div id="endCoords">Not set — click "Set End Point" then click map</div>
+                        <div style="margin-top: 5px; font-size: 11px;">
+                            <input type="number" id="endLat" placeholder="Latitude" step="any" style="width: 45%; padding: 3px; font-size: 10px;" onchange="updateEndFromCoords()">
+                            <input type="number" id="endLon" placeholder="Longitude" step="any" style="width: 45%; padding: 3px; font-size: 10px;" onchange="updateEndFromCoords()">
+                        </div>
                     </div>
 
                     <button id="setStartBtn" class="btn btn-sm">Set Start Point</button>
                     <button id="setEndBtn" class="btn btn-sm">Set End Point</button>
 
                     <div style="margin-top: 15px;">
-                        <h4>Waypoints (Optional)</h4>
+                        <h4>Angle Points (Optional)</h4>
                         <p class="help-text" style="font-size: 11px;">Add intermediate points the route must pass through</p>
                         <div id="waypointsList"></div>
-                        <button id="addWaypointBtn" class="btn btn-sm" style="margin-top: 5px;">+ Add Waypoint</button>
+                        <button id="addWaypointBtn" class="btn btn-sm" style="margin-top: 5px;">+ Add Angle Point</button>
                     </div>
                 </div>
 

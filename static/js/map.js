@@ -677,6 +677,13 @@ function removeWaypointMarker(waypointId) {
 function updateStartCoords(lat, lon) {
     const el = document.getElementById('startCoords');
     if (el) el.textContent = `Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}`;
+    
+    // Also update coordinate input fields
+    const startLatInput = document.getElementById('startLat');
+    const startLonInput = document.getElementById('startLon');
+    if (startLatInput) startLatInput.value = lat.toFixed(6);
+    if (startLonInput) startLonInput.value = lon.toFixed(6);
+    
     currentProject.start = { lat, lon, name: 'Start Point' };
     updatePointLabels();
 }
@@ -687,6 +694,13 @@ function updateStartCoords(lat, lon) {
 function updateEndCoords(lat, lon) {
     const el = document.getElementById('endCoords');
     if (el) el.textContent = `Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}`;
+    
+    // Also update coordinate input fields
+    const endLatInput = document.getElementById('endLat');
+    const endLonInput = document.getElementById('endLon');
+    if (endLatInput) endLatInput.value = lat.toFixed(6);
+    if (endLonInput) endLonInput.value = lon.toFixed(6);
+    
     currentProject.end = { lat, lon, name: 'End Point' };
     updatePointLabels();
 }

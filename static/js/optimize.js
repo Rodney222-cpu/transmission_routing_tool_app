@@ -72,6 +72,49 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('setStartBtn').classList.remove('active');
     });
     
+    // Coordinate input handlers
+    window.updateStartFromCoords = function() {
+        const lat = parseFloat(document.getElementById('startLat').value);
+        const lon = parseFloat(document.getElementById('startLon').value);
+        
+        if (!isNaN(lat) && !isNaN(lon)) {
+            currentProject.start = { lat, lon };
+            
+            // Update display
+            document.getElementById('startCoords').textContent = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+            
+            // Place marker on map
+            if (window.startMarker) {
+                window.startMarker.setLatLng([lat, lon]);
+            } else {
+                window.startMarker = L.marker([lat, lon], {icon: startIcon}).addTo(map);
+            }
+            
+            console.log('✓ Start point set from coordinates:', lat, lon);
+        }
+    };
+    
+    window.updateEndFromCoords = function() {
+        const lat = parseFloat(document.getElementById('endLat').value);
+        const lon = parseFloat(document.getElementById('endLon').value);
+        
+        if (!isNaN(lat) && !isNaN(lon)) {
+            currentProject.end = { lat, lon };
+            
+            // Update display
+            document.getElementById('endCoords').textContent = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+            
+            // Place marker on map
+            if (window.endMarker) {
+                window.endMarker.setLatLng([lat, lon]);
+            } else {
+                window.endMarker = L.marker([lat, lon], {icon: endIcon}).addTo(map);
+            }
+            
+            console.log('✓ End point set from coordinates:', lat, lon);
+        }
+    };
+    
     // AHP weight sliders
     setupWeightSliders();
     
@@ -212,9 +255,15 @@ function removeWaypoint(waypointId) {
  */
 function renderWaypoints() {
     const container = document.getElementById('waypointsList');
+    
+    // Add null check to prevent "Cannot set properties of null" error
+    if (!container) {
+        console.warn('waypointsList container not found in DOM');
+        return;
+    }
 
     if (waypoints.length === 0) {
-        container.innerHTML = '<p class="help-text" style="font-size: 11px; margin: 5px 0;">No waypoints added</p>';
+        container.innerHTML = '<p class="help-text" style="font-size: 11px; margin: 5px 0;">No angle points added</p>';
         return;
     }
 
@@ -802,7 +851,10 @@ function displayResults(result) {
     // Display simple cost summary
     displaySimpleCostSummary(costBreakdown);
 
-    document.getElementById('resultsSection').style.display = 'block';
+    const resultsSection = document.getElementById('resultsSection');
+    if (resultsSection) {
+        resultsSection.style.display = 'block';
+    }
 }
 
 // Store chart instances to destroy before recreating
