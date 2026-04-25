@@ -375,6 +375,8 @@ async function optimizeRoute() {
             }
         }
 
+        console.log('🎯 Selected algorithm:', algorithm);
+
         // Handle "both" option - run comparison
         let requestBody = {};
         if (algorithm === 'both') {
@@ -382,6 +384,8 @@ async function optimizeRoute() {
         } else {
             requestBody = { algorithm: algorithm };
         }
+
+        console.log('📦 Request body:', requestBody);
 
         console.log('Starting optimization for project:', currentProject.projectId, 'request:', requestBody);
         const optimizeResponse = await fetch(`/api/projects/${currentProject.projectId}/optimize`, {
@@ -400,11 +404,21 @@ async function optimizeRoute() {
         
         const result = await optimizeResponse.json();
 
+        console.log('✅ Optimization successful!');
+        console.log('🔍 Algorithm used:', result.algorithm_used);
+        console.log('📍 Route points:', result.route?.geometry?.coordinates?.length || 0);
+
         // Display route on map (without towers initially)
         displayRoute(result.route, []);
 
         // Display results (include algorithm used and comparison if present)
-        displayResults(result);
+        try {
+            displayResults(result);
+            console.log('✅ Results displayed successfully');
+        } catch (displayError) {
+            console.error('❌ Error displaying results:', displayError);
+            // Don't block the route display if results fail
+        }
 
         if (result.algorithm_comparison) {
             const comp = result.algorithm_comparison;
@@ -842,7 +856,12 @@ function displayResults(result) {
     // Show user-friendly route quality assessment
     html += generateRouteQualityCard(errors, warnings, metrics, result);
 
-    document.getElementById('routeMetrics').innerHTML = html;
+    const routeMetrics = document.getElementById('routeMetrics');
+    if (routeMetrics) {
+        routeMetrics.innerHTML = html;
+    } else {
+        console.error('routeMetrics element not found in DOM');
+    }
 
     // Create graphical charts
     createDynamicAvoidanceChart(result);
@@ -1118,7 +1137,12 @@ function displaySimpleCostSummary(costBreakdown) {
     
     html += '</div>';
 
-    document.getElementById('costBreakdown').innerHTML = html;
+    const costBreakdownEl = document.getElementById('costBreakdown');
+    if (costBreakdownEl) {
+        costBreakdownEl.innerHTML = html;
+    } else {
+        console.warn('costBreakdown element not found in DOM');
+    }
 }
 
 /**
