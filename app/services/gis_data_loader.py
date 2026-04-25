@@ -166,16 +166,34 @@ def load_layers_for_bounds(
         ("settlements", "SETTLEMENTS_FOLDER"),
         ("protected_areas", "PROTECTED_AREAS_FOLDER"),
         ("roads", "ROADS_FOLDER"),
+        ("rivers", "RIVERS_FOLDER"),
+        ("wetlands", "WETLANDS_FOLDER"),
+        ("lakes", "LAKES_FOLDER"),
+        ("waterbodies", "WATERBODIES_FOLDER"),
+        ("forests", "FORESTS_FOLDER"),
+        ("education", "EDUCATION_FOLDER"),
+        ("health_facilities", "HEALTH_FACILITIES_FOLDER"),
+        ("power_infrastructure", "POWER_INFRASTRUCTURE_FOLDER"),
+        ("airports", "AIRPORTS_FOLDER"),
+        ("commercial_facilities", "COMMERCIAL_FACILITIES_FOLDER"),
     ):
         folder = getattr(config, folder_attr, "")
+        if not folder or not os.path.isdir(folder):
+            continue
+            
+        # Try GeoJSON first
         gj = _first_existing_file(folder, (".geojson", ".json"))
         if not gj:
+            # Skip if no GeoJSON found
             continue
+            
         geojson = _load_geojson(gj)
         if not geojson:
             continue
+            
         presence = rasterize_geojson_presence(geojson, bounds_wgs84, out_shape)
         layers[key] = presence
+        print(f"✓ Loaded {key} layer from GeoJSON: {os.path.basename(gj)}")
 
     return layers
 
