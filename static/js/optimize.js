@@ -18,6 +18,44 @@ let ahpWeights = {
 let waypoints = [];
 
 /**
+ * Clear previous route and results before running new optimization
+ */
+function clearPreviousRoute() {
+    // Remove route layer from map
+    if (window.routeLayer) {
+        map.removeLayer(window.routeLayer);
+        window.routeLayer = null;
+    }
+    
+    // Remove tower markers
+    if (window.towerMarkers) {
+        window.towerMarkers.forEach(marker => map.removeLayer(marker));
+        window.towerMarkers = [];
+    }
+    
+    // Clear route analysis results
+    const resultsSection = document.getElementById('resultsSection');
+    if (resultsSection) {
+        resultsSection.style.display = 'none';
+        resultsSection.innerHTML = '';
+    }
+    
+    // Clear route metrics
+    const routeMetrics = document.getElementById('routeMetrics');
+    if (routeMetrics) {
+        routeMetrics.innerHTML = '';
+    }
+    
+    // Hide generate towers button
+    const generateTowersBtn = document.getElementById('generateTowersBtn');
+    if (generateTowersBtn) {
+        generateTowersBtn.style.display = 'none';
+    }
+    
+    console.log('✓ Cleared previous route and results');
+}
+
+/**
  * Initialize optimization controls
  */
 document.addEventListener('DOMContentLoaded', function() {
@@ -231,6 +269,9 @@ async function optimizeRoute() {
         return;
     }
     
+    // Clear previous route and results BEFORE starting new optimization
+    clearPreviousRoute();
+    
     // Show loading indicator
     document.getElementById('loadingIndicator').style.display = 'block';
     document.getElementById('optimizeBtn').disabled = true;
@@ -239,9 +280,9 @@ async function optimizeRoute() {
         // Validate waypoints
         const validWaypoints = waypoints.filter(wp => wp.lat && wp.lon);
 
-        // Step 1: Create project
+        // Step 1: Create a NEW project for each optimization (ensures fresh route)
         const projectData = {
-            name: document.getElementById('projectName').value,
+            name: document.getElementById('projectName').value + '_' + Date.now(),
             description: 'Automated route optimization',
             voltage_level: parseInt(document.getElementById('voltageLevel').value),
             tower_type: document.getElementById('towerType').value,

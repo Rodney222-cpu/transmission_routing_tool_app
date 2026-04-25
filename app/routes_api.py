@@ -164,7 +164,9 @@ def _run_pathfinder(cost_surface, bounds, route_points, algorithm, resolution_m=
 
             raw_segment = segment_result['path']
             # Smooth per-segment so waypoints stay anchored (endpoints are preserved)
-            smoothed_segment = pathfinder.smooth_path_los(raw_segment)
+            # REDUCED max_cost_ratio from 1.2 to 1.05 to preserve more bends around obstacles
+            # Only shortcut if direct path is almost same cost (5% threshold)
+            smoothed_segment = pathfinder.smooth_path_los(raw_segment, max_cost_ratio=1.05, max_iterations=2)
 
             if i == 0:
                 all_paths.extend(smoothed_segment)
@@ -352,13 +354,43 @@ def optimize_route(project_id):
         cs_weights = _normalize_ahp_weights_for_cost_surface(ahp_weights)
         print(f"⚖️  AHP slider weights (frontend): {ahp_weights}")
         print(f"⚖️  Cost-surface weights (backend): {cs_weights}")
+        
+        # Apply EXPONENTIAL scaling to cost surface weights for stronger obstacle avoidance
+        # This creates higher penalties for crossing features, forcing routes to bend around them
+        import numpy as np
+        exponential_factor = 2.0  # Power to raise weights (2.0 = quadratic scaling)
+        enhanced_weights = {k: v ** exponential_factor for k, v in cs_weights.items()}
+        # Re-normalize after exponential scaling
+        total_weight = sum(enhanced_weights.values())
+        enhanced_weights = {k: v / total_weight for k, v in enhanced_weights.items()}
+        
+        print(f"🚀 Enhanced obstacle avoidance weights: {enhanced_weights}")
+        
         cost_surface, metadata = cost_generator.generate_composite_cost_surface(
-            bounds, cs_weights, layers_data, resolution=resolution_m, grid_shape=shape
+            bounds, enhanced_weights, layers_data, resolution=resolution_m, grid_shape=shape
         )
+        
+        # Apply MINIMUM cost floor to prevent straight-line routing
+        # This forces algorithm to actively seek lowest-cost paths rather than going straight
         cost_surface = np.asarray(cost_surface, dtype=np.float32)
+        min_cost = cost_surface.min()
+        max_cost = cost_surface.max()
+        
+        # Increase contrast: amplify high-cost areas (obstacles) more than low-cost areas
+        if max_cost > min_cost:
+            # Normalize to 0-1 range
+            cost_normalized = (cost_surface - min_cost) / (max_cost - min_cost)
+            # Apply power function to increase contrast (values > 0.5 become higher, < 0.5 become lower)
+            contrast_factor = 1.5
+            cost_enhanced = np.power(cost_normalized, 1.0 / contrast_factor)
+            # Scale back to original range
+            cost_surface = cost_enhanced * (max_cost - min_cost) + min_cost
+            print(f"🎯 Enhanced cost surface contrast (min={min_cost:.2f}, max={max_cost:.2f})")
+        
         metadata = metadata or {}
         metadata["data_source"] = data_source
         metadata["resolution_m"] = resolution_m
+        metadata["enhanced_obstacle_avoidance"] = True
 
         cost_surface_path = os.path.join(
             current_app.config['DATA_FOLDER'],
@@ -416,7 +448,9 @@ def optimize_route(project_id):
             db.session.commit()
             return jsonify({'error': 'No valid path found for the selected algorithm'}), 400
 
-        simplified_path = pathfinder.simplify_path(path_result['path'], tolerance=1)
+        # REDUCED smoothing to preserve bends around obstacles
+        # tolerance=2 means keep more intermediate points instead of straightening
+        simplified_path = pathfinder.simplify_path(path_result['path'], tolerance=2)
         simplified_coords = pathfinder.path_to_coordinates(simplified_path, bounds, resolution_m)
 
         validator = EngineeringValidator(current_app.config)
