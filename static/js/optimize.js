@@ -871,26 +871,53 @@ function displayResults(result) {
     }
 
     // Show user-friendly route quality assessment
-    html += generateRouteQualityCard(errors, warnings, metrics, result);
+    console.log('📝 Generating route quality card...');
+    try {
+        html += generateRouteQualityCard(errors, warnings, metrics, result);
+        console.log('✅ Route quality card generated');
+    } catch (qualityError) {
+        console.error('❌ Error generating quality card:', qualityError);
+        html += '<p>Route quality assessment unavailable</p>';
+    }
 
+    console.log('📊 Updating routeMetrics element...');
     const routeMetrics = document.getElementById('routeMetrics');
     if (routeMetrics) {
+        console.log('✅ Found routeMetrics element, setting innerHTML...');
         routeMetrics.innerHTML = html;
+        console.log('✅ routeMetrics updated successfully');
     } else {
-        console.error('routeMetrics element not found in DOM');
+        console.error('❌ routeMetrics element not found in DOM');
     }
 
     // Create graphical charts
-    createDynamicAvoidanceChart(result);
-    createElevationChart(result);
+    console.log('📈 Creating charts...');
+    try {
+        createDynamicAvoidanceChart(result);
+        createElevationChart(result);
+        console.log('✅ Charts created');
+    } catch (chartError) {
+        console.error('❌ Error creating charts:', chartError);
+    }
 
     // Display simple cost summary
-    displaySimpleCostSummary(costBreakdown);
+    console.log('💰 Displaying cost summary...');
+    try {
+        displaySimpleCostSummary(costBreakdown);
+        console.log('✅ Cost summary displayed');
+    } catch (costError) {
+        console.error('❌ Error displaying cost summary:', costError);
+    }
 
     const resultsSection = document.getElementById('resultsSection');
     if (resultsSection) {
+        console.log('✅ Showing results section');
         resultsSection.style.display = 'block';
+    } else {
+        console.error('❌ resultsSection element not found in DOM');
     }
+    
+    console.log('✅ displayResults completed successfully');
 }
 
 // Store chart instances to destroy before recreating
