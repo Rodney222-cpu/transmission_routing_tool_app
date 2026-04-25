@@ -25,14 +25,15 @@ class AStarPathFinder:
     """
 
     # w > 1 makes A* greedy toward the goal (straighter, less exploration).
-    # REDUCED from 1.5 to 1.2 to make route follow cost surface more closely
-    # and create more bends around obstacles instead of going straight
-    DEFAULT_HEURISTIC_WEIGHT = 1.2
+    # INCREASED from 1.2 to 2.0 to create visibly different routes from Dijkstra
+    # Higher weight = more straight-line bias, less cost surface following
+    # Lower weight = more cost surface following, closer to Dijkstra
+    DEFAULT_HEURISTIC_WEIGHT = 2.0
     # Per-step distance toll added to each edge cost.  Expressed as a fraction
     # of the mean terrain cost (computed on construction) so it scales with the
     # surface rather than being swamped by high-cost pixels.
-    # REDUCED from 0.15 to 0.05 to reduce straight-line bias
-    DEFAULT_DISTANCE_PENALTY_FRACTION = 0.05
+    # INCREASED from 0.05 to 0.10 to create more visible difference from Dijkstra
+    DEFAULT_DISTANCE_PENALTY_FRACTION = 0.10
 
     def __init__(self, cost_surface: np.ndarray,
                  heuristic_weight: float = DEFAULT_HEURISTIC_WEIGHT,

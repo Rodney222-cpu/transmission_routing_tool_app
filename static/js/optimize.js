@@ -801,20 +801,35 @@ function simplifyWarningMessage(warning) {
  * Display optimization results
  */
 function displayResults(result) {
+    console.log('📊 displayResults called with:', result);
+    
+    if (!result || !result.validation) {
+        console.error('❌ Invalid result object:', result);
+        return;
+    }
+    
     const metrics = result.validation.metrics;
-    const errors = result.validation.errors;
-    const warnings = result.validation.warnings;
+    const errors = result.validation.errors || [];
+    const warnings = result.validation.warnings || [];
     const costBreakdown = result.cost_breakdown;
+    
+    console.log('📈 Metrics:', metrics);
+    console.log('💰 Cost breakdown:', costBreakdown);
+
+    if (!metrics) {
+        console.error('❌ No metrics in validation result');
+        return;
+    }
 
     let html = '<div class="metrics">';
     if (result.algorithm_used) {
         html += `<p><strong>Algorithm:</strong> ${result.algorithm_used}</p>`;
     }
-    html += `<p><strong>Route Length:</strong> ${(metrics.total_length_km).toFixed(2)} km</p>`;
-    html += `<p><strong>Estimated Towers:</strong> ${result.route.properties.estimated_towers}</p>`;
-    html += `<p><strong>Avg Span Length:</strong> ${result.route.properties.avg_span_length_m.toFixed(1)} m</p>`;
-    html += `<p><strong>Total Cost:</strong> $${(costBreakdown.total_cost / 1000000).toFixed(2)}M</p>`;
-    html += `<p><strong>Cost per km:</strong> $${(costBreakdown.cost_per_km / 1000).toFixed(0)}K</p>`;
+    html += `<p><strong>Route Length:</strong> ${(metrics.total_length_km || 0).toFixed(2)} km</p>`;
+    html += `<p><strong>Estimated Towers:</strong> ${result.route?.properties?.estimated_towers || 0}</p>`;
+    html += `<p><strong>Avg Span Length:</strong> ${(result.route?.properties?.avg_span_length_m || 0).toFixed(1)} m</p>`;
+    html += `<p><strong>Total Cost:</strong> $${((costBreakdown?.total_cost || 0) / 1000000).toFixed(2)}M</p>`;
+    html += `<p><strong>Cost per km:</strong> $${((costBreakdown?.cost_per_km || 0) / 1000).toFixed(0)}K</p>`;
     if (result.avoidance_metrics && result.avoidance_metrics.overall_avoidance_score != null) {
         html += `<p><strong>Overall avoidance score:</strong> ${result.avoidance_metrics.overall_avoidance_score}% (average across feature layers)</p>`;
     }
@@ -822,6 +837,8 @@ function displayResults(result) {
         html += `<p><strong>Elevation along route:</strong> ${result.route_elevation.min_m.toFixed(0)}–${result.route_elevation.max_m.toFixed(0)} m (avg ${result.route_elevation.avg_m.toFixed(0)} m)</p>`;
     }
     html += '</div>';
+    
+    console.log('✅ Generated metrics HTML, length:', html.length);
 
     // Show algorithm comparison if both were run
     if (result.algorithm_comparison) {

@@ -355,6 +355,14 @@ def optimize_route(project_id):
         print(f"⚖️  AHP slider weights (frontend): {ahp_weights}")
         print(f"⚖️  Cost-surface weights (backend): {cs_weights}")
         
+        # Log which GIS layers are actually loaded
+        print(f"📊 Loaded GIS layers: {list(layers_data.keys()) if layers_data else 'NONE - using demo data'}")
+        if 'protected_areas' in layers_data:
+            pa_data = layers_data['protected_areas']
+            print(f"🛡️ Protected areas layer loaded: shape={np.asarray(pa_data).shape}, has_data={np.any(np.asarray(pa_data) > 0)}")
+        else:
+            print("⚠️ WARNING: Protected areas layer NOT loaded - routes won't avoid protected areas!")
+        
         # Apply EXPONENTIAL scaling to cost surface weights for stronger obstacle avoidance
         # This creates higher penalties for crossing features, forcing routes to bend around them
         import numpy as np
