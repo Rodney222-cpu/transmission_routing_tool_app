@@ -365,7 +365,6 @@ def optimize_route(project_id):
         
         # Apply EXPONENTIAL scaling to cost surface weights for stronger obstacle avoidance
         # This creates higher penalties for crossing features, forcing routes to bend around them
-        import numpy as np
         exponential_factor = 2.0  # Power to raise weights (2.0 = quadratic scaling)
         enhanced_weights = {k: v ** exponential_factor for k, v in cs_weights.items()}
         # Re-normalize after exponential scaling
