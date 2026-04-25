@@ -1,2 +1,10 @@
-data/dem/*.tif filter=lfs diff=lfs merge=lfs -text
-data/*/uganda_*.geojson filter=lfs diff=lfs merge=lfs -text
+# Default behavior
+* text=auto
+
+# GIS binary files - only track essential source files with LFS
+# (Most data files are now in .gitignore and shouldn't be tracked)
+*.shp filter=lfs diff=lfs merge=lfs -text
+*.shx filter=lfs diff=lfs merge=lfs -text
+*.dbf filter=lfs diff=lfs merge=lfs -text
+*.prj binary
+*.cpg binary

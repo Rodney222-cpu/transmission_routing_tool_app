@@ -49,22 +49,8 @@ instance/
 .DS_Store
 Thumbs.db
 
-# Data files - Original shapefiles (not needed, we have GeoJSON)
-*.shp
-*.shx
-*.dbf
-*.prj
-*.cpg
-
 # Uploads folder
 uploads/
-
-# Generated cost surfaces (created at runtime)
-cost_surface_project_*.npy
-cost_surface_project_*.tif
-
-# Note: DEM .tif files and GeoJSON files are tracked by Git LFS
-# See .gitattributes for details
 
 # Logs
 *.log
@@ -82,13 +68,58 @@ app/*/*/__pycache__/
 *.tmp
 *.temp
 
-# Cost surface files (generated during runtime)
+# ============================================
+# GENERATED FILES (can be recreated, DO NOT track)
+# ============================================
+
+# Generated cost surfaces (created at runtime)
 cost_surface_project_*.npy
 cost_surface_project_*.tif
 
-# Large data files that should not be in git
-# Note: These are already excluded above but keeping for clarity
-# data/
-# *.tif
-# *.geojson
+# ============================================
+# LARGE GIS DATA FILES (excluded from Git)
+# Download separately via scripts
+# ============================================
+
+# DEM and elevation data
+data/dem/*.tif
+data/elevation/*.tif
+
+# Generated/processed shapefiles and associated files
+data/*.shp
+data/*.shx
+data/*.dbf
+data/*.prj
+data/*.cpg
+data/*.sbn
+data/*.sbx
+data/*.qix
+data/*.xml
+data/*.lock
+
+# Cost surface files in data folder
+data/cost_surface_project_*.npy
+data/cost_surface_project_*.tif
+
+# GeoJSON files (large, download separately)
+data/*.geojson
+data/**/*.geojson
+
+# All subdirectory GIS files
+data/*/*.shp
+data/*/*.shx
+data/*/*.dbf
+data/*/*.prj
+data/*/*.cpg
+data/*/*.sbn
+data/*/*.sbx
+data/*/*.qix
+data/*/*.xml
+data/*/*.lock
+data/*/*.tif
+data/*/*.tiff
+
+# Test output files
+test_output/*.png
+test_output/*.jpg
 
