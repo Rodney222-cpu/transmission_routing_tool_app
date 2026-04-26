@@ -658,6 +658,9 @@ function setWaypointLocation(waypointId, lat, lng) {
     waypointMarkers[waypointId] = marker;
 
     if (typeof renderWaypoints === 'function') renderWaypoints();
+
+    // Reset cursor after placing
+    document.body.style.cursor = 'default';
 }
 
 /**
@@ -727,9 +730,9 @@ function displayRoute(routeGeoJSON, towerPositions) {
     // Add route line
     routeLayer = L.geoJSON(routeGeoJSON, {
         style: {
-            color: '#FF6B00',
+            color: '#1565c0',   // blue — doesn't clash with cost surface green/red
             weight: 4,
-            opacity: 0.8
+            opacity: 0.9
         }
     }).addTo(map);
 

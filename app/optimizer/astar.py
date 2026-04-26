@@ -85,10 +85,18 @@ class AStarPathFinder:
         dp = self.distance_penalty
         open_set = [(w * self._heuristic(start, end), 0, start[0], start[1])]
         closed_set = set()
+        
+        # Debug counters
+        nodes_explored = 0
+        max_queue_size = 0
 
         while open_set:
             f_val, current_cost, row, col = heapq.heappop(open_set)
             current = (row, col)
+            
+            # Track statistics
+            nodes_explored += 1
+            max_queue_size = max(max_queue_size, len(open_set))
 
             if current in closed_set:
                 continue
@@ -96,11 +104,13 @@ class AStarPathFinder:
 
             if current == end:
                 path = self._reconstruct_path(parent, start, end)
+                print(f"   ✓ A*: explored {nodes_explored:,} nodes, max queue: {max_queue_size:,}, weight={w:.2f}")
                 return {
                     'path': path,
                     'total_cost': g_cost[end],
                     'distance': len(path),
                     'euclidean_distance': self._euclidean_distance(start, end),
+                    'nodes_explored': nodes_explored
                 }
 
             for i, (dr, dc) in enumerate(self.directions):
@@ -122,6 +132,7 @@ class AStarPathFinder:
                     h = self._heuristic(neighbor, end)
                     heapq.heappush(open_set, (new_g + w * h, new_g, nr, nc))
 
+        print(f"   ❌ A*: no path found after exploring {nodes_explored:,} nodes")
         return None
 
     def _reconstruct_path(self, parent: dict, start: Tuple[int, int], end: Tuple[int, int]) -> List[Tuple[int, int]]:

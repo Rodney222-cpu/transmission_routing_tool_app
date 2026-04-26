@@ -84,10 +84,16 @@ def _resolve_layer_path(folder_path):
     return None, None
 
 
-def _run_cost_surface_pipeline(data):
+def _run_cost_surface_pipeline(data, generate_route=True):
     """
-    Shared handler for cost-surface generation. Returns a (json_dict, status_code)
-    tuple so the Flask route wrappers stay thin.
+    Shared handler for cost-surface generation and routing.
+    
+    Args:
+        data: Request JSON data
+        generate_route: If False, ONLY generate cost surface (no routing)
+        
+    Returns:
+        (json_dict, status_code) tuple
     """
     from app.optimizer.qgis_cost_surface import QGISStyleCostSurfaceAnalyzer
     import time
@@ -99,6 +105,7 @@ def _run_cost_surface_pipeline(data):
     weights_input = data.get('weights')
     start_point_data = data.get('start_point', {})
     end_point_data = data.get('end_point', {})
+    algorithm = data.get('algorithm', 'dijkstra')  # 'dijkstra' or 'astar'
 
     # Support both shapes:
     #   1) layers as a dict: {name: {enabled, weight, ...}}
@@ -125,15 +132,27 @@ def _run_cost_surface_pipeline(data):
     if not layers_config:
         return {'success': False, 'error': 'No layers specified'}, 400
 
+    # Start and end points (required for routing, optional for cost surface only)
     start_lat = start_point_data.get('lat')
     start_lon = start_point_data.get('lon')
     end_lat = end_point_data.get('lat')
     end_lon = end_point_data.get('lon')
-    if None in (start_lat, start_lon, end_lat, end_lon):
-        return {'success': False, 'error': 'Start and end points required'}, 400
-
-    start_point = (float(start_lat), float(start_lon))
-    end_point = (float(end_lat), float(end_lon))
+    
+    start_point = None
+    end_point = None
+    
+    if generate_route:
+        # Routing requires start and end points
+        if None in (start_lat, start_lon, end_lat, end_lon):
+            return {'success': False, 'error': 'Start and end points required for routing'}, 400
+        start_point = (float(start_lat), float(start_lon))
+        end_point = (float(end_lat), float(end_lon))
+    else:
+        # Cost surface only - start/end optional
+        if start_lat and start_lon:
+            start_point = (float(start_lat), float(start_lon))
+        if end_lat and end_lon:
+            end_point = (float(end_lat), float(end_lon))
 
     bounds = data.get('bounds')
     resolution = data.get('resolution')
@@ -142,9 +161,17 @@ def _run_cost_surface_pipeline(data):
     if enabled_count == 0:
         return {'success': False, 'error': 'At least one layer must be enabled'}, 400
 
-    print("🎯 QGIS-style cost surface analysis started")
+    print("=" * 70)
+    print("🎯 QGIS-STYLE COST SURFACE ANALYSIS")
+    print("=" * 70)
+    print(f"   Mode: {'COST SURFACE + ROUTING' if generate_route else 'COST SURFACE ONLY'}")
     print(f"   Enabled layers: {enabled_count}")
-    print(f"   Start: {start_point}, End: {end_point}")
+    if start_point:
+        print(f"   Start: {start_point}")
+    if end_point:
+        print(f"   End: {end_point}")
+    if generate_route:
+        print(f"   Algorithm: {algorithm.upper()}")
 
     start_time = time.time()
     analyzer = QGISStyleCostSurfaceAnalyzer(
@@ -164,7 +191,7 @@ def _run_cost_surface_pipeline(data):
         if resolved:
             cfg['path'] = resolved
             cfg['type'] = layer_type
-            print(f"   ✓ {layer_name}: {resolved}")
+            print(f"   ✓ {layer_name}: {os.path.basename(resolved)}")
         else:
             print(f"   ⚠ {layer_name}: No usable file in {folder_path}")
 
@@ -174,10 +201,13 @@ def _run_cost_surface_pipeline(data):
         end_point=end_point,
         bounds=bounds,
         resolution=resolution,
+        generate_route=generate_route,
+        algorithm=algorithm,
     )
 
     elapsed = time.time() - start_time
     print(f"✓ Pipeline completed in {elapsed:.2f}s")
+    print("=" * 70)
 
     png_path = result.get('cost_surface_png')
     png_base64 = None
@@ -191,7 +221,9 @@ def _run_cost_surface_pipeline(data):
         'cost_surface_png': '/' + result['cost_surface_png'],
         'cost_surface_png_base64': png_base64,
         'route_shp': '/' + result['route_shp'] if result.get('route_shp') else None,
+        'route_geojson': result.get('route_geojson'),
         'bounds': result['bounds'],
+        'transform': result.get('transform'),
         'metadata': result['metadata'],
     }
     return response, 200
@@ -199,12 +231,85 @@ def _run_cost_surface_pipeline(data):
 
 @cost_surface_bp.route('/generate-cost-surface', methods=['POST'])
 def generate_cost_surface():
-    """Spec-compliant endpoint: POST /generate-cost-surface."""
+    """
+    COST SURFACE ONLY endpoint: POST /generate-cost-surface
+    
+    This endpoint ONLY generates the cost surface visualization.
+    It does NOT generate any route.
+    
+    Request:
+    {
+        "layers": {...},
+        "bounds": [...],
+        "resolution": 0.001
+    }
+    
+    Response:
+    {
+        "success": true,
+        "cost_surface_tif": "/static/cost_surface.tif",
+        "cost_surface_png": "/static/cost_surface.png",
+        "cost_surface_png_base64": "...",
+        "bounds": [...],
+        "metadata": {...}
+    }
+    """
     try:
-        payload, status = _run_cost_surface_pipeline(request.get_json(silent=True))
+        # generate_route=False means ONLY cost surface, NO routing
+        payload, status = _run_cost_surface_pipeline(
+            request.get_json(silent=True),
+            generate_route=False
+        )
         return jsonify(payload), status
     except Exception as e:
-        print(f"❌ Error in cost surface pipeline: {e}")
+        print(f"❌ Error in cost surface generation: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@cost_surface_bp.route('/optimize-route', methods=['POST'])
+def optimize_route():
+    """
+    ROUTING endpoint: POST /optimize-route
+    
+    This endpoint generates BOTH cost surface AND route.
+    Use this when you want to compute the least-cost path.
+    
+    Request:
+    {
+        "layers": {...},
+        "start_point": {"lat": ..., "lon": ...},
+        "end_point": {"lat": ..., "lon": ...},
+        "algorithm": "dijkstra",  // or "astar"
+        "bounds": [...],
+        "resolution": 0.001
+    }
+    
+    Response:
+    {
+        "success": true,
+        "cost_surface_tif": "/static/cost_surface.tif",
+        "cost_surface_png": "/static/cost_surface.png",
+        "route_geojson": {...},
+        "route_shp": "/static/route.shp",
+        "bounds": [...],
+        "metadata": {
+            "total_cost": ...,
+            "path_length_nodes": ...,
+            "algorithm": "dijkstra"
+        }
+    }
+    """
+    try:
+        # generate_route=True means cost surface + routing
+        payload, status = _run_cost_surface_pipeline(
+            request.get_json(silent=True),
+            generate_route=True
+        )
+        return jsonify(payload), status
+    except Exception as e:
+        print(f"❌ Error in route optimization: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -214,14 +319,41 @@ def generate_cost_surface():
 @login_required
 def generate_qgis_cost_surface():
     """
-    Authenticated alias reachable at POST /api/qgis/generate-cost-surface.
-    Kept for backward compatibility with the existing dashboard UI.
+    COST SURFACE ONLY: POST /api/qgis/generate-cost-surface
+    
+    Authenticated endpoint for cost surface generation only (no routing).
+    Kept for backward compatibility with existing dashboard UI.
     """
     try:
-        payload, status = _run_cost_surface_pipeline(request.get_json(silent=True))
+        payload, status = _run_cost_surface_pipeline(
+            request.get_json(silent=True),
+            generate_route=False
+        )
         return jsonify(payload), status
     except Exception as e:
-        print(f"❌ Error in QGIS cost surface pipeline: {e}")
+        print(f"❌ Error in QGIS cost surface generation: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@qgis_api_bp.route('/optimize-route', methods=['POST'])
+@login_required
+def optimize_qgis_route():
+    """
+    ROUTING: POST /api/qgis/optimize-route
+    
+    Authenticated endpoint for cost surface + routing.
+    Generates both the cost surface and the least-cost path.
+    """
+    try:
+        payload, status = _run_cost_surface_pipeline(
+            request.get_json(silent=True),
+            generate_route=True
+        )
+        return jsonify(payload), status
+    except Exception as e:
+        print(f"❌ Error in QGIS route optimization: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500

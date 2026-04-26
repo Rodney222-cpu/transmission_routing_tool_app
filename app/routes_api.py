@@ -140,6 +140,8 @@ def _run_pathfinder(cost_surface, bounds, route_points, algorithm, resolution_m=
         height, width = cost_surface.shape
         total_pixels = height * width
         print(f"🔍 Pathfinding on {width} × {height} = {total_pixels:,} pixels")
+        print(f"🔍 Algorithm: {algorithm.upper()}")
+        print(f"🔍 Cost surface range: {cost_surface.min():.2f} to {cost_surface.max():.2f}")
 
         if algorithm == 'astar':
             pathfinder = AStarPathFinder(cost_surface)
@@ -158,15 +160,22 @@ def _run_pathfinder(cost_surface, bounds, route_points, algorithm, resolution_m=
                 route_points[i + 1]['lon'], route_points[i + 1]['lat'],
                 bounds, cost_surface.shape
             )
+            
+            print(f"🔍 Segment {i+1}: pixel ({segment_start_pixel[0]}, {segment_start_pixel[1]}) → ({segment_end_pixel[0]}, {segment_end_pixel[1]})")
+            
             segment_result = pathfinder.find_path(segment_start_pixel, segment_end_pixel)
             if segment_result is None:
+                print(f"❌ No path found for segment {i+1}")
                 return None, None, None
 
             raw_segment = segment_result['path']
+            print(f"✓ Segment {i+1}: {len(raw_segment)} pixels, cost={segment_result['total_cost']:.2f}")
+            
             # Smooth per-segment so waypoints stay anchored (endpoints are preserved)
             # REDUCED max_cost_ratio from 1.2 to 1.05 to preserve more bends around obstacles
             # Only shortcut if direct path is almost same cost (5% threshold)
             smoothed_segment = pathfinder.smooth_path_los(raw_segment, max_cost_ratio=1.05, max_iterations=2)
+            print(f"✓ Smoothed: {len(raw_segment)} → {len(smoothed_segment)} points")
 
             if i == 0:
                 all_paths.extend(smoothed_segment)
@@ -183,6 +192,10 @@ def _run_pathfinder(cost_surface, bounds, route_points, algorithm, resolution_m=
             'distance': len(all_paths_dense),
         }
         path_coords = pathfinder.path_to_coordinates(path_result['path'], bounds, resolution_m)
+        
+        print(f"✅ Complete path: {len(all_paths_dense)} pixels, total_cost={total_cost:.2f}")
+        print(f"✅ Geographic coordinates: {len(path_coords)} points")
+        
         return path_result, path_coords, pathfinder
     except MemoryError as e:
         print(f"❌ Memory error in pathfinding: {str(e)}")
@@ -373,9 +386,18 @@ def optimize_route(project_id):
         
         print(f"🚀 Enhanced obstacle avoidance weights: {enhanced_weights}")
         
+        # Generate cost surface with enhanced weights
         cost_surface, metadata = cost_generator.generate_composite_cost_surface(
             bounds, enhanced_weights, layers_data, resolution=resolution_m, grid_shape=shape
         )
+        
+        # Log cost surface statistics for debugging
+        print(f"📊 Cost Surface Statistics:")
+        print(f"   Shape: {cost_surface.shape}")
+        print(f"   Min cost: {cost_surface.min():.2f}")
+        print(f"   Max cost: {cost_surface.max():.2f}")
+        print(f"   Mean cost: {cost_surface.mean():.2f}")
+        print(f"   Std dev: {cost_surface.std():.2f}")
         
         # Apply MINIMUM cost floor to prevent straight-line routing
         # This forces algorithm to actively seek lowest-cost paths rather than going straight
@@ -419,6 +441,11 @@ def optimize_route(project_id):
         route_points.append({'lat': project.end_lat, 'lon': project.end_lon})
         
         print(f"🛤️ Route has {len(route_points)} points total ({len(waypoints_data)} waypoints)")
+        print(f"📍 Start: ({project.start_lat:.4f}, {project.start_lon:.4f})")
+        print(f"📍 End: ({project.end_lat:.4f}, {project.end_lon:.4f})")
+        if waypoints_data:
+            for i, wp in enumerate(waypoints_data):
+                print(f"📍 Waypoint {i+1}: ({wp['lat']:.4f}, {wp['lon']:.4f})")
 
         comparison = {}
         path_result = None
@@ -767,101 +794,126 @@ def generate_cost_surface():
         print(f"   Bounds: {bounds}")
         print(f"   Raster: {width} x {height} @ ~{actual_resolution_m:.1f}m")
         
-        # --- Step 1 & 2: rasterize + per-layer reclassification ------------
+        # --- Step 1 & 2: rasterize + per-layer friction mapping -----------
         analyzer = QGISStyleCostSurfaceAnalyzer(
             config=current_app.config, output_dir='static'
         )
-        layer_reclass = {
-            'protected_areas': analyzer.reclassify_protected_areas,
-            'rivers':          analyzer.reclassify_water_distance,
-            'wetlands':        analyzer.reclassify_wetlands,
-            'lakes':           analyzer.reclassify_water_distance,
-            'land_use':        analyzer.reclassify_land_use,
-            'elevation':       (lambda arr, *a: analyzer.reclassify_elevation_slope(arr)),
-            # Settlements and roads are "avoid proximity" features → same
-            # distance-based logic as water (nearer = higher cost).
-            'settlements':     analyzer.reclassify_water_distance,
-            'roads':           analyzer.reclassify_water_distance,
+
+        # Layer-specific friction functions
+        layer_friction = {
+            'protected_areas': lambda b, s: analyzer.friction_barrier(b, inside_cost=100, outside_cost=1),
+            'wetlands':        lambda b, s: analyzer.friction_barrier(b, inside_cost=90,  outside_cost=1),
+            'lakes':           lambda b, s: analyzer.friction_barrier(b, inside_cost=95,  outside_cost=1),
+            'rivers':          lambda b, s: analyzer.friction_distance_penalty(b, bounds, s, max_dist_m=3000),
+            'settlements':     lambda b, s: analyzer.friction_distance_penalty(b, bounds, s, max_dist_m=2000),
+            'roads':           lambda b, s: analyzer.friction_distance_benefit(b, bounds, s, max_dist_m=2000),
+            'land_use':        lambda b, s: analyzer.friction_land_use(b, bounds, s),
+            'elevation':       None,   # handled separately (raster slope)
         }
 
-        cost_rasters = {}
+        raw_rasters = {}
         resolved_sources = {}
+        debug_stats = {}
         start_time = time.time()
 
         for layer_name in list(enabled_layers.keys()):
             folder_key = _LAYER_FOLDER_CONFIG_KEYS.get(layer_name)
             folder_path = current_app.config.get(folder_key) if folder_key else None
             path, layer_type = _resolve_layer_path(folder_path)
-            reclass_fn = layer_reclass.get(layer_name)
 
             if path and layer_type == 'raster':
-                raster = analyzer.prepare_raster_from_raster(
-                    path, bounds, shape, reclass_fn
-                )
+                raw_data = analyzer.load_and_resample_raster(path, bounds, shape)
+                if layer_name == 'elevation':
+                    raster = analyzer.friction_elevation_slope(raw_data)
+                else:
+                    fn = layer_friction.get(layer_name)
+                    raster = fn(raw_data, shape) if fn else raw_data
                 resolved_sources[layer_name] = os.path.basename(path)
+
             elif path and layer_type == 'vector':
-                raster = analyzer.prepare_raster_from_vector(
-                    path, bounds, shape, reclass_fn
-                )
+                binary = analyzer.load_and_rasterize_vector(path, bounds, shape)
+                fn = layer_friction.get(layer_name)
+                raster = fn(binary, shape) if fn else np.where(binary > 0, 100.0, 1.0).astype(np.float32)
                 resolved_sources[layer_name] = os.path.basename(path)
+
             else:
-                print(f"   ⚠ {layer_name}: no file found in {folder_path}")
-                raster = np.full(shape, 50.0, dtype=np.float32)
+                print(f"   ⚠ {layer_name}: no file found in {folder_path} — generating synthetic layer")
+                raster = _synthetic_layer(layer_name, shape, bounds)
                 resolved_sources[layer_name] = None
 
-            cost_rasters[layer_name] = raster
+            debug_stats[layer_name] = {
+                'raw_min': round(float(raster.min()), 3),
+                'raw_max': round(float(raster.max()), 3),
+                'raw_mean': round(float(raster.mean()), 3),
+            }
+            raw_rasters[layer_name] = raster
 
-        # --- Step 3: normalize weights -----------------------------------
+        # --- Step 3: weighted overlay (raw 1-100 values, NOT pre-normalised) ---
+        # Using raw values means high-weight layers dominate strongly,
+        # so changing weights produces visibly different surfaces.
         normalized_weights = analyzer.normalize_weights(enabled_layers)
+        cost_surface = analyzer.weighted_overlay(raw_rasters, normalized_weights, debug=True)
 
-        # --- Step 4: weighted overlay ------------------------------------
-        cost_surface = analyzer.compute_weighted_overlay(
-            cost_rasters, normalized_weights
-        )
+        # Stretch the surface to fill the full 1-100 range so quantile
+        # classification always distributes colors across the entire map.
+        cs_min = float(np.nanmin(cost_surface))
+        cs_max = float(np.nanmax(cost_surface))
+        if cs_max > cs_min:
+            cost_surface = (1.0 + 99.0 * (cost_surface - cs_min) / (cs_max - cs_min)).astype(np.float32)
+        else:
+            cost_surface = np.full_like(cost_surface, 50.0)
+
         gen_time = time.time() - start_time
 
-        min_val = float(np.nanmin(cost_surface))
-        max_val = float(np.nanmax(cost_surface))
+        min_val  = float(np.nanmin(cost_surface))
+        max_val  = float(np.nanmax(cost_surface))
         mean_val = float(np.nanmean(cost_surface))
-        print(f"✓ Cost surface: min={min_val:.2f} max={max_val:.2f} mean={mean_val:.2f} in {gen_time:.2f}s")
+        print(f"✓ Cost surface: min={min_val:.3f} max={max_val:.3f} "
+              f"mean={mean_val:.3f} in {gen_time:.2f}s")
 
-        # --- Vectorized 5-band color ramp (matches dashboard legend) -----
-        # Scale raw cost values into the 156..476 display range used by the
-        # frontend legend so the same tick labels always make sense.
-        if max_val > min_val:
-            scaled = 156.0 + ((cost_surface - min_val) / (max_val - min_val)) * (476.0 - 156.0)
-        else:
-            scaled = np.full_like(cost_surface, 316.0)
+        # add weight contribution to debug stats
+        for name in debug_stats:
+            w = normalized_weights.get(name, 0)
+            debug_stats[name]['weight'] = round(w, 4)
+            debug_stats[name]['contribution_max'] = round(w * debug_stats[name]['raw_max'], 3)
 
-        rgba = np.zeros((height, width, 4), dtype=np.uint8)
-        rgba[..., 3] = 200  # default alpha (per-band overwritten below)
+        # --- Step 4: save GeoTIFF so it can be downloaded/served --------
+        import uuid
+        tif_filename = f'cost_surface_{uuid.uuid4().hex[:8]}.tif'
+        tif_path = os.path.join('static', tif_filename)
+        analyzer.export_cost_surface_geotiff(cost_surface, bounds, tif_path)
+        print(f"✓ GeoTIFF saved: {tif_path}")
 
-        band_edges = [220.0, 284.0, 348.0, 412.0]
-        band_colors = [
-            (34, 139, 34),    # very low  – forest green
-            (144, 238, 144),  # low       – light green
-            (255, 255, 0),    # moderate  – yellow
-            (255, 165, 0),    # high      – orange
-            (255, 0, 0),      # very high – red
-        ]
-        masks = [
-            scaled < band_edges[0],
-            (scaled >= band_edges[0]) & (scaled < band_edges[1]),
-            (scaled >= band_edges[1]) & (scaled < band_edges[2]),
-            (scaled >= band_edges[2]) & (scaled < band_edges[3]),
-            scaled >= band_edges[3],
-        ]
-        for mask, (r, g, b) in zip(masks, band_colors):
-            rgba[mask, 0] = r
-            rgba[mask, 1] = g
-            rgba[mask, 2] = b
-            rgba[mask, 3] = 200
+        # --- Step 5: dynamic classification (quantile preferred) --------
+        classification_method = data.get('classification', 'quantile')
+        n_classes = int(data.get('n_classes', 5))
+        cls_result = analyzer.classify_cost_surface(
+            cost_surface, n_classes=n_classes, method=classification_method
+        )
 
+        # --- Step 6: render classified image with QGIS speckle ----------
+        rgba = analyzer.render_classified_image(cls_result['classified'], cls_result['colors'])
         img = Image.fromarray(rgba, 'RGBA')
         img_io = io.BytesIO()
-        img.save(img_io, 'PNG')
+        img.save(img_io, 'PNG', optimize=False)
         img_io.seek(0)
         img_base64 = base64.b64encode(img_io.read()).decode('utf-8')
+
+        # --- Step 7: NO ROUTE GENERATION IN COST SURFACE ENDPOINT -------
+        # Cost surface generation should ONLY create the raster visualization
+        # Routes are generated separately via the /optimize endpoint
+        route_geojson = None
+        print("ℹ️  Cost surface generated WITHOUT route (use 'Optimize Route' button to generate route)")
+
+        # --- Build dynamic legend entries --------------------------------
+        legend_entries = []
+        for i, (lo, hi) in enumerate(cls_result['breaks']):
+            r, g, b = cls_result['colors'][i]
+            legend_entries.append({
+                'label': f'{lo:.2f} \u2013 {hi:.2f}',
+                'color': f'rgb({r},{g},{b})',
+                'min': lo, 'max': hi, 'class': i + 1,
+            })
 
         data_source = 'real' if any(resolved_sources.values()) else 'demo'
         return jsonify({
@@ -869,6 +921,16 @@ def generate_cost_surface():
             'message': 'Cost surface generated successfully',
             'image_base64': img_base64,
             'bounds': bounds,
+            'legend': legend_entries,
+            'route': route_geojson,
+            'geotiff_url': f'/static/{tif_filename}',
+            'classification': {
+                'method': cls_result['method'],
+                'n_classes': cls_result['n_classes'],
+                'global_min': cls_result['global_min'],
+                'global_max': cls_result['global_max'],
+            },
+            'debug': debug_stats,
             'metadata': {
                 'resolution_m': round(actual_resolution_m, 1),
                 'shape': [height, width],
@@ -1130,79 +1192,60 @@ def get_cost_surface_image(project_id):
         except Exception as e:
             return jsonify({'error': f'Failed to load cost surface: {str(e)}'}), 500
     
-    # Normalize cost surface to 0-255 for image
-    min_val = np.nanmin(cost_surface)
-    max_val = np.nanmax(cost_surface)
+    # Vectorized color mapping — exact QGIS 5-band style
+    min_val = float(np.nanmin(cost_surface))
+    max_val = float(np.nanmax(cost_surface))
+    height, width = cost_surface.shape
+
     if max_val > min_val:
-        normalized = ((cost_surface - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+        scaled = 156.0 + ((cost_surface - min_val) / (max_val - min_val)) * (476.0 - 156.0)
     else:
-        normalized = np.zeros_like(cost_surface, dtype=np.uint8)
-    
-    # Create color heatmap matching the reference image
-    # Color scale: Green (low) -> Light Green -> Yellow -> Orange -> Red (high)
-    # Based on cost values: 156-220 (green), 220-284 (light green), 284-348 (yellow), 348-412 (orange), 412-476 (red)
-    height, width = normalized.shape
+        scaled = np.full_like(cost_surface, 316.0)
+
+    rng_img = np.random.default_rng(42)
+    noise = rng_img.integers(-12, 13, size=(height, width), dtype=np.int16)
+
     rgba_image = np.zeros((height, width, 4), dtype=np.uint8)
-    
-    # Calculate actual cost range for legend
-    cost_range = max_val - min_val
-    
-    for i in range(height):
-        for j in range(width):
-            val = normalized[i, j]
-            # Normalize to 0-1
-            t = val / 255.0
-            
-            # Color gradient matching the image:
-            # Dark Green (low cost) -> Green -> Light Green -> Yellow -> Orange -> Red (high cost)
-            if t < 0.2:
-                # Dark Green to Green (156-220 equivalent)
-                r = 0
-                g = int(150 + 105 * (t / 0.2))  # 150-255
-                b = 0
-            elif t < 0.4:
-                # Green to Light Green (220-284 equivalent)
-                r = int(144 * ((t - 0.2) / 0.2))  # 0-144
-                g = 255
-                b = 0
-            elif t < 0.6:
-                # Light Green to Yellow (284-348 equivalent)
-                r = int(144 + 111 * ((t - 0.4) / 0.2))  # 144-255
-                g = 255
-                b = 0
-            elif t < 0.8:
-                # Yellow to Orange (348-412 equivalent)
-                r = 255
-                g = int(255 - 100 * ((t - 0.6) / 0.2))  # 255-155
-                b = 0
-            else:
-                # Orange to Red (412-476 equivalent)
-                r = 255
-                g = int(155 - 155 * ((t - 0.8) / 0.2))  # 155-0
-                b = 0
-            
-            rgba_image[i, j] = [r, g, b, 200]  # Slightly more opaque for better visibility
-    
-    # Create PIL Image with transparency
+    band_defs = [
+        (scaled < 220,                          34,  139,  34),
+        ((scaled >= 220) & (scaled < 284),     124,  205,  50),
+        ((scaled >= 284) & (scaled < 348),     255,  230,   0),
+        ((scaled >= 348) & (scaled < 412),     255,  140,   0),
+        (scaled >= 412,                        220,   20,  20),
+    ]
+    for mask, r, g, b in band_defs:
+        rgba_image[mask, 0] = np.clip(r + noise[mask], 0, 255).astype(np.uint8)
+        rgba_image[mask, 1] = np.clip(g + noise[mask], 0, 255).astype(np.uint8)
+        rgba_image[mask, 2] = np.clip(b + noise[mask] // 2, 0, 255).astype(np.uint8)
+        rgba_image[mask, 3] = 180   # semi-transparent so map shows through
+
+    # Get bounds from the cost surface record for the overlay
+    bounds = cost_surface_record.get_bounds() or [None, None, None, None]
+
     img = Image.fromarray(rgba_image, 'RGBA')
-    
-    # Save to bytes
     img_io = io.BytesIO()
     img.save(img_io, 'PNG')
     img_io.seek(0)
-    
-    # Return with cost scale metadata
+
     response = send_file(
         img_io,
         mimetype='image/png',
         as_attachment=False,
         download_name=f'cost_surface_project_{project_id}.png'
     )
-    
-    # Add cost scale headers for frontend legend
+
+    # Expose metadata as headers so the frontend can position the overlay
     response.headers['X-Cost-Min'] = str(round(min_val, 2))
     response.headers['X-Cost-Max'] = str(round(max_val, 2))
-    
+    response.headers['X-Bounds-Min-Lon'] = str(bounds[0])
+    response.headers['X-Bounds-Min-Lat'] = str(bounds[1])
+    response.headers['X-Bounds-Max-Lon'] = str(bounds[2])
+    response.headers['X-Bounds-Max-Lat'] = str(bounds[3])
+    response.headers['Access-Control-Expose-Headers'] = (
+        'X-Cost-Min, X-Cost-Max, X-Bounds-Min-Lon, X-Bounds-Min-Lat, '
+        'X-Bounds-Max-Lon, X-Bounds-Max-Lat'
+    )
+
     return response
 
 
@@ -1236,6 +1279,121 @@ def _normalize_ahp_weights_for_cost_surface(weights):
             w = 0.0
         normalized[back_key] = normalized.get(back_key, 0.0) + w
     return normalized
+
+
+def _synthetic_layer(layer_name: str, shape: tuple, bounds: list) -> np.ndarray:
+    """
+    Spatially-varying synthetic cost raster (1-100 scale). Fully vectorised.
+    Every layer is guaranteed to span the full 1-100 range so the weighted
+    overlay always produces a surface with genuine spatial variation.
+    """
+    h, w = int(shape[0]), int(shape[1])
+    seed = (abs(int(sum(v * 1e4 for v in bounds))) ^ (hash(layer_name) & 0x7FFFFFFF)) & 0x7FFFFFFF
+    rng = np.random.default_rng(seed)
+
+    rows = np.linspace(0.0, 1.0, h, dtype=np.float32)
+    cols = np.linspace(0.0, 1.0, w, dtype=np.float32)
+    yn = rows[:, np.newaxis] + np.zeros((h, w), dtype=np.float32)
+    xn = np.zeros((h, w), dtype=np.float32) + cols[np.newaxis, :]
+
+    def _stretch(arr):
+        """Guarantee the output spans exactly 1-100."""
+        lo, hi = arr.min(), arr.max()
+        if hi > lo:
+            return (1.0 + 99.0 * (arr - lo) / (hi - lo)).astype(np.float32)
+        return np.full_like(arr, 50.0, dtype=np.float32)
+
+    if layer_name in ('protected_areas', 'wetlands', 'lakes'):
+        # Scattered high-cost blobs on a smooth low-cost background
+        # Background varies smoothly so low-cost classes fill most of the map
+        background = (10.0 + 20.0 * (np.sin(yn * np.pi * 3) * 0.5 + 0.5)
+                      + rng.random((h, w)).astype(np.float32) * 5.0)
+        n_blobs = int(rng.integers(4, 9))
+        cy = rng.uniform(0.1, 0.9, n_blobs)
+        cx = rng.uniform(0.1, 0.9, n_blobs)
+        radii = rng.uniform(0.04, 0.15, n_blobs)
+        inside_cost = 100.0 if layer_name == 'protected_areas' else (90.0 if layer_name == 'wetlands' else 95.0)
+        for i in range(n_blobs):
+            dist = np.sqrt((yn - cy[i]) ** 2 + (xn - cx[i]) ** 2)
+            background = np.where(dist < radii[i], inside_cost, background)
+        return _stretch(background)
+
+    elif layer_name == 'rivers':
+        # Two sinuous rivers + smooth distance gradient
+        t = np.linspace(0.0, np.pi * 2.0, w, dtype=np.float32)
+        r1 = 0.35 + 0.15 * np.sin(t + float(rng.uniform(0, np.pi)))
+        r2 = 0.65 + 0.15 * np.sin(t + float(rng.uniform(0, np.pi)))
+        d1 = np.abs(yn - r1[np.newaxis, :])
+        d2 = np.abs(yn - r2[np.newaxis, :])
+        dist = np.minimum(d1, d2)
+        cost = np.clip(100.0 - dist * 300.0, 1.0, 100.0).astype(np.float32)
+        return _stretch(cost)
+
+    elif layer_name == 'settlements':
+        # Scattered town clusters with smooth falloff
+        n_towns = int(rng.integers(5, 12))
+        cy = rng.uniform(0.05, 0.95, n_towns)
+        cx = rng.uniform(0.05, 0.95, n_towns)
+        base = np.full((h, w), 5.0, dtype=np.float32)
+        for i in range(n_towns):
+            dist = np.sqrt((yn - cy[i]) ** 2 + (xn - cx[i]) ** 2)
+            base = np.maximum(base, np.clip(100.0 - dist * 500.0, 1.0, 100.0))
+        return _stretch(base)
+
+    elif layer_name == 'roads':
+        # Road network — near road = low cost, far = high cost
+        road_mask = np.zeros((h, w), dtype=np.uint8)
+        # Two horizontal roads
+        for frac in [0.3, 0.7]:
+            ry = int(h * frac)
+            road_mask[max(0, ry - 1):ry + 2, :] = 1
+        # One diagonal road
+        cidx = np.arange(w)
+        ridx = np.clip((0.5 * h + cidx * 0.3).astype(int), 0, h - 1)
+        road_mask[ridx, cidx] = 1
+        from scipy.ndimage import distance_transform_edt
+        dist_px = distance_transform_edt(1 - road_mask).astype(np.float32)
+        cost = 1.0 + 99.0 * (dist_px / dist_px.max())
+        return _stretch(cost)
+
+    elif layer_name == 'elevation':
+        # Smooth terrain with genuine slope variation — NOT near-constant
+        # Use multiple overlapping hills so slope varies from flat to steep
+        dem = np.zeros((h, w), dtype=np.float32)
+        n_hills = int(rng.integers(4, 8))
+        cy = rng.uniform(0.1, 0.9, n_hills)
+        cx = rng.uniform(0.1, 0.9, n_hills)
+        heights = rng.uniform(200.0, 800.0, n_hills)
+        widths = rng.uniform(0.1, 0.3, n_hills)
+        for i in range(n_hills):
+            dist2 = (yn - cy[i]) ** 2 + (xn - cx[i]) ** 2
+            dem += heights[i] * np.exp(-dist2 / (2 * widths[i] ** 2))
+        # Add gentle background slope
+        dem += 100.0 * xn + 50.0 * yn
+        dy, dx = np.gradient(dem)
+        slope_deg = np.degrees(np.arctan(np.sqrt(dx ** 2 + dy ** 2)))
+        return _stretch(slope_deg)
+
+    elif layer_name == 'land_use':
+        # Voronoi patches with varied costs
+        n_patches = int(rng.integers(10, 22))
+        cy = rng.uniform(0.0, 1.0, n_patches).astype(np.float32)
+        cx = rng.uniform(0.0, 1.0, n_patches).astype(np.float32)
+        patch_costs = rng.choice(
+            np.array([5, 15, 25, 40, 55, 70, 85, 100], dtype=np.float32), n_patches
+        )
+        dy2 = (yn[:, :, np.newaxis] - cy[np.newaxis, np.newaxis, :]) ** 2
+        dx2 = (xn[:, :, np.newaxis] - cx[np.newaxis, np.newaxis, :]) ** 2
+        nearest = np.argmin(dy2 + dx2, axis=2)
+        cost = patch_costs[nearest]
+        from scipy.ndimage import uniform_filter
+        cost = uniform_filter(cost, size=max(3, min(h, w) // 15)).astype(np.float32)
+        return _stretch(cost)
+
+    else:
+        gradient = xn * 0.6 + yn * 0.4
+        noise = rng.random((h, w)).astype(np.float32) * 0.4
+        return _stretch((gradient + noise))
 
 
 def _create_demo_layers(bounds, config, shape=None):

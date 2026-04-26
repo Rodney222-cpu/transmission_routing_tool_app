@@ -70,10 +70,18 @@ class LeastCostPathFinder:
 
         # Closed set to track visited nodes
         closed_set = set()
+        
+        # Debug counters
+        nodes_explored = 0
+        max_queue_size = 0
 
         while open_set:
             current_cost, row, col = heapq.heappop(open_set)
             current = (row, col)
+            
+            # Track statistics
+            nodes_explored += 1
+            max_queue_size = max(max_queue_size, len(open_set))
 
             # Skip if already processed
             if current in closed_set:
@@ -85,11 +93,13 @@ class LeastCostPathFinder:
             # Check if we reached the goal
             if current == end:
                 path = self._reconstruct_path(parent, start, end)
+                print(f"   ✓ Dijkstra: explored {nodes_explored:,} nodes, max queue: {max_queue_size:,}")
                 return {
                     'path': path,
                     'total_cost': g_cost[end],
                     'distance': len(path),
-                    'euclidean_distance': self._euclidean_distance(start, end)
+                    'euclidean_distance': self._euclidean_distance(start, end),
+                    'nodes_explored': nodes_explored
                 }
 
             # Explore neighbors
@@ -125,6 +135,7 @@ class LeastCostPathFinder:
                     heapq.heappush(open_set, (new_cost, neighbor_row, neighbor_col))
 
         # No path found
+        print(f"   ❌ Dijkstra: no path found after exploring {nodes_explored:,} nodes")
         return None
     
     def _is_valid_position(self, pos: Tuple[int, int]) -> bool:

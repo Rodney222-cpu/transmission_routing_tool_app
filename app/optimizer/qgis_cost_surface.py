@@ -1,12 +1,16 @@
 """
 QGIS-Style Cost Surface Analysis and Least-Cost Routing
-
-This module implements a complete cost surface generation pipeline that mirrors QGIS functionality:
-1. Raster preparation (alignment, reprojection, resampling)
-2. Layer-specific reclassification (cost values 1-100)
-3. Weighted overlay computation
-4. Least-cost path finding (A* algorithm)
-5. Export to GeoTIFF, PNG, and Shapefile
+========================================================
+Complete pipeline:
+  1. Base raster grid  – consistent CRS/resolution/extent (Uganda EPSG:4326)
+  2. Rasterization     – all vectors → rasters aligned to base grid
+  3. Friction mapping  – layer-specific cost logic (barriers=high, roads=low, slope, etc.)
+  4. Normalisation     – every layer scaled to 1–10
+  5. Weighted overlay  – cost_surface = Σ(weight_i × layer_i), weights sum to 1.0
+  6. Classification    – quantile (preferred) or equal-interval, 5 classes
+  7. Rendering         – QGIS green→lime→yellow→orange→red colour ramp + speckle
+  8. Least-cost path   – Dijkstra on pixel graph, diagonal movement × 1.414
+  9. Debug stats       – per-layer min/max, weight contributions, surface stats
 """
 
 import os
@@ -15,8 +19,7 @@ import rasterio
 from rasterio.transform import from_bounds
 from rasterio.warp import reproject, Resampling
 from rasterio.features import rasterize
-from rasterio.mask import raster_geometry_mask
-from shapely.geometry import Point, LineString, box
+from shapely.geometry import LineString
 import geopandas as gpd
 from scipy.ndimage import distance_transform_edt
 from PIL import Image
@@ -26,625 +29,845 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# QGIS colour ramp  (green → lime → yellow → orange → red)
+# ---------------------------------------------------------------------------
+_QGIS_5_COLORS = [
+    (34,  139,  34),   # class 1 – dark green
+    (124, 205,  50),   # class 2 – lime green
+    (255, 230,   0),   # class 3 – yellow
+    (255, 140,   0),   # class 4 – orange
+    (220,  20,  20),   # class 5 – red
+]
+
+# Land-use cost dictionary (value in shapefile → raw cost 1-100)
+_LAND_USE_COST = {
+    0:  10,   # unknown / no data
+    1: 100,   # urban / built-up
+    2:  50,   # farmland / cropland
+    3:  20,   # grassland / savanna
+    4:  60,   # forest / woodland
+    5:  80,   # wetland
+    6:  30,   # bare soil / rock
+    7:  15,   # open water (small)
+    10: 100,  # ESA: tree cover
+    20:  30,  # ESA: shrubland
+    30:  20,  # ESA: grassland
+    40:  50,  # ESA: cropland
+    50: 100,  # ESA: built-up
+    60:  25,  # ESA: bare / sparse
+    80: 100,  # ESA: permanent water
+    90:  80,  # ESA: herbaceous wetland
+    95:  85,  # ESA: mangroves
+}
+
 
 class QGISStyleCostSurfaceAnalyzer:
     """
-    Performs cost surface analysis and least-cost routing similar to QGIS.
-    
-    Pipeline:
-    1. Raster preparation - align all rasters to same grid
-    2. Reclassification - convert to cost values (1-100)
-    3. Weighted overlay - combine layers with weights
-    4. Least-cost path - A* routing on cost surface
-    5. Export - GeoTIFF, PNG, Shapefile
+    Complete QGIS-style cost surface analysis and least-cost routing.
+
+    Pipeline
+    --------
+    1. build_base_grid()          – define CRS / resolution / extent
+    2. rasterize_layer()          – vector → raster aligned to base grid
+    3. friction_*()               – layer-specific cost logic (1-100 raw)
+    4. normalize_to_1_10()        – scale every layer to 1-10
+    5. weighted_overlay()         – Σ(weight_i × layer_i), weights sum to 1
+    6. classify_cost_surface()    – quantile or equal-interval, 5 classes
+    7. render_classified_image()  – QGIS colour ramp + speckle
+    8. least_cost_path_dijkstra() – Dijkstra, diagonal × 1.414
     """
-    
+
     def __init__(self, config, output_dir='static'):
-        """
-        Initialize analyzer.
-        
-        Args:
-            config: Flask app config
-            output_dir: Directory for output files
-        """
         self.config = config
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
-        
-        # Uganda bounding box
-        self.uganda_bounds = [29.5, -1.5, 35.0, 4.5]  # [min_lon, min_lat, max_lon, max_lat]
-        
-        # Default resolution (degrees)
-        self.default_resolution = 0.001  # ~100m at equator
-        
-        # CRS
-        self.target_crs = 'EPSG:4326'  # WGS84
-    
-    def prepare_raster_from_vector(self, vector_path, bounds, shape, 
-                                    reclassify_func=None, column=None):
+        self.uganda_bounds = [29.5, -1.5, 35.0, 4.5]
+        self.default_resolution = 0.001
+        self.target_crs = 'EPSG:4326'
+
+    # ------------------------------------------------------------------
+    # 1. BASE GRID
+    # ------------------------------------------------------------------
+    def build_base_grid(self, bounds, resolution_m=100):
         """
-        Step 1: Convert vector to raster and reclassify.
-        
-        Args:
-            vector_path: Path to vector file (GeoJSON or Shapefile)
-            bounds: Bounding box [min_lon, min_lat, max_lon, max_lat]
-            shape: Raster shape (height, width)
-            reclassify_func: Function to reclassify values to cost (1-100)
-            column: Column name to use for values
-            
-        Returns:
-            numpy array of cost values (1-100)
+        Return (shape, transform) for a raster grid aligned to *bounds*
+        at *resolution_m* metres.  All layers must use the same grid.
         """
+        min_lon, min_lat, max_lon, max_lat = bounds
+        # 1 degree ≈ 111 320 m (longitude), 110 540 m (latitude)
+        center_lat = 0.5 * (min_lat + max_lat)
+        m_per_deg_lon = 111320.0 * max(np.cos(np.radians(center_lat)), 0.01)
+        m_per_deg_lat = 110540.0
+        width  = max(4, int((max_lon - min_lon) * m_per_deg_lon / resolution_m))
+        height = max(4, int((max_lat - min_lat) * m_per_deg_lat / resolution_m))
+        transform = from_bounds(min_lon, min_lat, max_lon, max_lat, width, height)
+        return (height, width), transform
+
+    # ------------------------------------------------------------------
+    # 2. RASTERIZATION  (vector → raster, aligned to base grid)
+    # ------------------------------------------------------------------
+    def rasterize_layer(self, gdf, bounds, shape, burn_value=1):
+        """
+        Rasterize a GeoDataFrame onto the base grid.
+        Returns a uint8 binary array (1 = feature present, 0 = absent).
+        """
+        transform = from_bounds(bounds[0], bounds[1], bounds[2], bounds[3],
+                                shape[1], shape[0])
+        if gdf.empty:
+            return np.zeros(shape, dtype=np.uint8)
+        if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
+            gdf = gdf.to_crs('EPSG:4326')
+        shapes = ((geom, burn_value) for geom in gdf.geometry if geom is not None)
+        out = rasterize(shapes, out_shape=shape, transform=transform,
+                        fill=0, all_touched=True, dtype=np.uint8)
+        return out
+
+    def load_and_rasterize_vector(self, vector_path, bounds, shape):
+        """Load a vector file and rasterize it onto the base grid."""
         try:
-            # Load vector
             gdf = gpd.read_file(vector_path)
-            
-            if gdf.empty:
-                logger.warning(f"Empty vector file: {vector_path}")
-                return np.ones(shape, dtype=np.float32)
-            
-            # Reproject to target CRS
-            if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
-                gdf = gdf.to_crs('EPSG:4326')
-            
-            # Create transform
-            transform = from_bounds(
-                bounds[0], bounds[1], bounds[2], bounds[3],
-                shape[1], shape[0]
-            )
-            
-            # Rasterize
-            if column and column in gdf.columns:
-                shapes = ((geom, value) for geom, value in zip(gdf.geometry, gdf[column]))
-            else:
-                shapes = ((geom, 1) for geom in gdf.geometry)
-            
-            rasterized = rasterize(
-                shapes,
-                out_shape=shape,
-                transform=transform,
-                fill=0,
-                all_touched=True
-            )
-            
-            # Reclassify to cost values
-            if reclassify_func:
-                cost_raster = reclassify_func(rasterized, gdf, bounds, transform)
-            else:
-                # Default: binary (0 or 1)
-                cost_raster = np.where(rasterized > 0, 100, 1)
-            
-            logger.info(f"✓ Vector rasterized: {os.path.basename(vector_path)}, shape: {shape}")
-            return cost_raster.astype(np.float32)
-            
+            return self.rasterize_layer(gdf, bounds, shape)
         except Exception as e:
-            logger.error(f"Error preparing vector raster: {e}")
-            return np.ones(shape, dtype=np.float32)
-    
-    def prepare_raster_from_raster(self, raster_path, bounds, shape, 
-                                    reclassify_func=None):
-        """
-        Step 1: Load and align existing raster.
-        
-        Args:
-            raster_path: Path to raster file (GeoTIFF)
-            bounds: Target bounding box
-            shape: Target shape (height, width)
-            reclassify_func: Function to reclassify to cost values
-            
-        Returns:
-            numpy array of cost values
-        """
+            logger.warning(f"Could not load {vector_path}: {e}")
+            return np.zeros(shape, dtype=np.uint8)
+
+    def load_and_resample_raster(self, raster_path, bounds, shape):
+        """Load a GeoTIFF and resample it onto the base grid."""
         try:
             with rasterio.open(raster_path) as src:
-                # Reproject if needed
-                if src.crs.to_epsg() != 4326:
-                    # Create destination array
-                    dest = np.zeros(shape, dtype=src.dtypes[0])
-                    
-                    transform = from_bounds(
-                        bounds[0], bounds[1], bounds[2], bounds[3],
-                        shape[1], shape[0]
-                    )
-                    
-                    reproject(
-                        source=rasterio.band(src, 1),
-                        destination=dest,
-                        src_transform=src.transform,
-                        src_crs=src.crs,
-                        dst_transform=transform,
-                        dst_crs='EPSG:4326',
-                        resampling=Resampling.bilinear
-                    )
-                    data = dest
-                else:
-                    # Read and resample
-                    window = src.window(*bounds)
-                    data = src.read(
-                        1,
-                        window=window,
-                        out_shape=shape,
-                        resampling=Resampling.bilinear
-                    )
-                
-                # Reclassify
-                if reclassify_func:
-                    cost_raster = reclassify_func(data)
-                else:
-                    cost_raster = data.astype(np.float32)
-                
-                logger.info(f"✓ Raster loaded: {os.path.basename(raster_path)}, shape: {shape}")
-                return cost_raster
-                
+                dst_transform = from_bounds(bounds[0], bounds[1], bounds[2], bounds[3],
+                                            shape[1], shape[0])
+                dest = np.zeros(shape, dtype=np.float32)
+                reproject(
+                    source=rasterio.band(src, 1),
+                    destination=dest,
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    dst_transform=dst_transform,
+                    dst_crs='EPSG:4326',
+                    resampling=Resampling.bilinear,
+                )
+                return dest
         except Exception as e:
-            logger.error(f"Error loading raster: {e}")
-            return np.ones(shape, dtype=np.float32)
-    
-    def reclassify_protected_areas(self, rasterized, gdf, bounds, transform):
-        """
-        Step 2: Reclassify protected areas.
-        Inside = 100 (high cost), Outside = 1 (low cost)
-        """
-        cost_raster = np.where(rasterized > 0, 100, 1)
-        return cost_raster
-    
-    def reclassify_water_distance(self, rasterized, gdf, bounds, transform):
-        """
-        Step 2: Reclassify rivers/lakes based on distance.
-        Nearer = higher cost (100 at water, decreasing with distance)
-        """
-        # Create binary mask (1 = water, 0 = not water)
-        water_mask = (rasterized > 0).astype(np.float32)
+            logger.warning(f"Could not load raster {raster_path}: {e}")
+            return np.zeros(shape, dtype=np.float32)
 
-        # Derive pixel size in meters from bounds/shape (WGS84 approximation)
-        height, width = water_mask.shape
-        if bounds is not None and width > 0 and height > 0:
-            center_lat = 0.5 * (bounds[1] + bounds[3])
-            deg_per_px_x = (bounds[2] - bounds[0]) / width
-            deg_per_px_y = (bounds[3] - bounds[1]) / height
-            m_per_px_x = deg_per_px_x * 111320.0 * max(np.cos(np.radians(center_lat)), 0.01)
-            m_per_px_y = deg_per_px_y * 110540.0
-        else:
-            m_per_px_x = m_per_px_y = 100.0
+    # ------------------------------------------------------------------
+    # 3. FRICTION / COST MAPPING  (raw cost 1-100)
+    # ------------------------------------------------------------------
+    def _pixel_sampling(self, bounds, shape):
+        """Return (m_per_px_y, m_per_px_x) for distance_transform_edt."""
+        h, w = shape
+        center_lat = 0.5 * (bounds[1] + bounds[3])
+        deg_per_px_x = (bounds[2] - bounds[0]) / max(w, 1)
+        deg_per_px_y = (bounds[3] - bounds[1]) / max(h, 1)
+        m_per_px_x = deg_per_px_x * 111320.0 * max(np.cos(np.radians(center_lat)), 0.01)
+        m_per_px_y = deg_per_px_y * 110540.0
+        return (m_per_px_y, m_per_px_x)
 
-        # Distance in meters (sampling respects non-square pixel size)
-        distance_meters = distance_transform_edt(
-            1 - water_mask, sampling=(m_per_px_y, m_per_px_x)
-        )
+    def friction_barrier(self, binary_raster, inside_cost=100, outside_cost=1):
+        """
+        Barriers (protected areas, wetlands, lakes):
+        inside = very high cost, outside = low cost.
+        """
+        return np.where(binary_raster > 0,
+                        float(inside_cost),
+                        float(outside_cost)).astype(np.float32)
 
-        # Reclassify: closer = higher cost (0m = 100, 5000m = 1)
-        max_distance = 5000  # meters
-        cost_raster = np.clip(100 - (distance_meters / max_distance) * 99, 1, 100)
+    def friction_distance_penalty(self, binary_raster, bounds, shape,
+                                  max_dist_m=5000, near_cost=100, far_cost=1):
+        """
+        Distance-based penalty: closer to feature = higher cost.
+        Used for rivers (crossing penalty), settlements, commercial areas.
+        """
+        sampling = self._pixel_sampling(bounds, shape)
+        presence = (binary_raster > 0).astype(np.uint8)
+        if not presence.any():
+            return np.full(shape, far_cost, dtype=np.float32)
+        dist_m = distance_transform_edt(1 - presence, sampling=sampling)
+        cost = np.clip(near_cost - (dist_m / max_dist_m) * (near_cost - far_cost),
+                       far_cost, near_cost)
+        return cost.astype(np.float32)
 
-        return cost_raster.astype(np.float32)
-    
-    def reclassify_wetlands(self, rasterized, gdf, bounds, transform):
+    def friction_distance_benefit(self, binary_raster, bounds, shape,
+                                  max_dist_m=2000, near_cost=1, far_cost=10):
         """
-        Step 2: Reclassify wetlands.
-        Inside = 80-100 (high cost), Outside = 1
+        Distance-based benefit: closer to feature = LOWER cost.
+        Used for roads and hospitals (easier access = cheaper construction).
         """
-        cost_raster = np.where(rasterized > 0, 90, 1)
-        return cost_raster
-    
-    def reclassify_land_use(self, rasterized, gdf, bounds, transform):
+        sampling = self._pixel_sampling(bounds, shape)
+        presence = (binary_raster > 0).astype(np.uint8)
+        if not presence.any():
+            return np.full(shape, far_cost, dtype=np.float32)
+        dist_m = distance_transform_edt(1 - presence, sampling=sampling)
+        cost = np.clip(near_cost + (dist_m / max_dist_m) * (far_cost - near_cost),
+                       near_cost, far_cost)
+        return cost.astype(np.float32)
+
+    def friction_land_use(self, raster_data, bounds, shape):
         """
-        Step 2: Reclassify land use by class.
-        Urban = 100, Farmland = 50, Grassland = 20, Forest = 60
+        Land-use cost using the _LAND_USE_COST dictionary.
+        Handles both binary (presence/absence) and classified rasters.
         """
-        # Initialize with low cost
-        cost_raster = np.ones(rasterized.shape, dtype=np.float32) * 20
-        
-        # If we have classification data, use it
-        if rasterized.max() > 0:
-            # Example classification (customize based on your data)
-            cost_raster = np.where(rasterized == 1, 100, cost_raster)  # Urban
-            cost_raster = np.where(rasterized == 2, 50, cost_raster)   # Farmland
-            cost_raster = np.where(rasterized == 3, 20, cost_raster)   # Grassland
-            cost_raster = np.where(rasterized == 4, 60, cost_raster)   # Forest
-            cost_raster = np.where(rasterized == 5, 80, cost_raster)   # Wetland
-        
-        return cost_raster
-    
-    def reclassify_elevation_slope(self, elevation_data):
+        cost = np.full(shape, 20.0, dtype=np.float32)   # default: open land
+        unique_vals = np.unique(raster_data.astype(np.int32))
+        for v in unique_vals:
+            if v in _LAND_USE_COST:
+                cost[raster_data.astype(np.int32) == v] = _LAND_USE_COST[v]
+        return cost
+
+    def friction_elevation_slope(self, elevation_data):
         """
-        Step 2: Derive slope from elevation, steeper = higher cost.
-        
-        Args:
-            elevation_data: numpy array of elevation values (meters)
-            
-        Returns:
-            Cost raster (1-100)
+        Derive slope from elevation; steeper = higher cost (1-100).
         """
-        # Compute slope using gradient
-        dy, dx = np.gradient(elevation_data)
-        
-        # Slope in degrees
-        slope_degrees = np.arctan(np.sqrt(dx**2 + dy**2)) * 180 / np.pi
-        
-        # Reclassify slope to cost
-        # 0° = 1, 45° = 100, linear interpolation
-        max_slope = 45  # degrees
-        cost_raster = np.clip((slope_degrees / max_slope) * 99 + 1, 1, 100)
-        
-        return cost_raster
-    
-    def normalize_weights(self, weights_dict):
-        """
-        Step 3: Normalize weights so they sum to 1.0.
-        Uses only selected layers.
-        
-        Args:
-            weights_dict: Dict of {layer_name: weight}
-            
-        Returns:
-            Normalized weights dict
-        """
-        total = sum(weights_dict.values())
+        dy, dx = np.gradient(elevation_data.astype(np.float32))
+        slope_deg = np.degrees(np.arctan(np.sqrt(dx**2 + dy**2)))
+        cost = np.clip((slope_deg / 45.0) * 99.0 + 1.0, 1.0, 100.0)
+        return cost.astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # 4. NORMALISATION  (1-10 scale, balanced contribution)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def normalize_to_1_10(layer):
+        """Scale any cost layer to the range [1, 10]."""
+        lo = float(np.nanmin(layer))
+        hi = float(np.nanmax(layer))
+        if hi <= lo:
+            return np.full_like(layer, 5.0, dtype=np.float32)
+        return (1.0 + 9.0 * (layer - lo) / (hi - lo)).astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # 5. WEIGHTED OVERLAY
+    # ------------------------------------------------------------------
+    @staticmethod
+    def normalize_weights(weights_dict):
+        """Normalise weights so they sum to 1.0."""
+        total = sum(abs(v) for v in weights_dict.values())
         if total == 0:
-            # Equal weights
             n = len(weights_dict)
-            return {k: 1.0/n for k in weights_dict.keys()}
-        
-        return {k: v / total for k, v in weights_dict.items()}
-    
+            return {k: 1.0 / n for k in weights_dict}
+        return {k: abs(v) / total for k, v in weights_dict.items()}
+
+    def weighted_overlay(self, normalized_layers, normalized_weights, debug=False):
+        """
+        cost_surface = Σ(weight_i × layer_i)
+        All layers must already be normalised to 1-10.
+        Returns float32 array.
+        """
+        first = next(iter(normalized_layers.values()))
+        h, w = first.shape
+        surface = np.zeros((h, w), dtype=np.float32)
+        for name, layer in normalized_layers.items():
+            w_val = normalized_weights.get(name, 0.0)
+            surface += w_val * layer
+            if debug:
+                logger.info(f"  [{name}] weight={w_val:.4f}  "
+                            f"min={layer.min():.2f} max={layer.max():.2f} "
+                            f"contribution_range=[{(w_val*layer.min()):.3f}, "
+                            f"{(w_val*layer.max()):.3f}]")
+        if debug:
+            logger.info(f"  Surface: min={surface.min():.3f} "
+                        f"max={surface.max():.3f} mean={surface.mean():.3f}")
+        return surface
+
+    # keep old name for backward compat
     def compute_weighted_overlay(self, cost_rasters, normalized_weights):
+        return self.weighted_overlay(cost_rasters, normalized_weights)
+
+    # ------------------------------------------------------------------
+    # 6. CLASSIFICATION  (quantile preferred, mirrors QGIS)
+    # ------------------------------------------------------------------
+    def classify_cost_surface(self, cost_surface, n_classes=5, method='quantile'):
         """
-        Step 4: Compute weighted overlay.
+        Classify cost surface into n_classes using quantile or equal-interval.
+
+        Returns dict:
+          classified  – uint8 array (1..n_classes)
+          breaks      – list of (lo, hi) raw-value tuples
+          colors      – list of (R,G,B) tuples
+          labels      – list of label strings
+          method, n_classes, global_min, global_max
+        """
+        flat = cost_surface[np.isfinite(cost_surface)].ravel()
+        global_min = float(flat.min())
+        global_max = float(flat.max())
+
+        if method == 'quantile':
+            pcts = np.linspace(0, 100, n_classes + 1)
+            edges = np.percentile(flat, pcts).tolist()
+        else:
+            edges = np.linspace(global_min, global_max, n_classes + 1).tolist()
+
+        # deduplicate
+        uniq = [edges[0]]
+        for e in edges[1:]:
+            if e > uniq[-1] + 1e-9:
+                uniq.append(e)
+        while len(uniq) < n_classes + 1:
+            uniq.append(uniq[-1] + 1e-6)
+        edges = uniq[:n_classes + 1]
+        actual = len(edges) - 1
+
+        # colour ramp
+        if actual == 5:
+            colors = list(_QGIS_5_COLORS)
+        else:
+            colors = []
+            for i in range(actual):
+                t = i / max(actual - 1, 1)
+                if t < 0.25:
+                    c = _lerp_color(_QGIS_5_COLORS[0], _QGIS_5_COLORS[1], t / 0.25)
+                elif t < 0.5:
+                    c = _lerp_color(_QGIS_5_COLORS[1], _QGIS_5_COLORS[2], (t - 0.25) / 0.25)
+                elif t < 0.75:
+                    c = _lerp_color(_QGIS_5_COLORS[2], _QGIS_5_COLORS[3], (t - 0.5) / 0.25)
+                else:
+                    c = _lerp_color(_QGIS_5_COLORS[3], _QGIS_5_COLORS[4], (t - 0.75) / 0.25)
+                colors.append((int(c[0]), int(c[1]), int(c[2])))
+
+        classified = np.zeros(cost_surface.shape, dtype=np.uint8)
+        breaks, labels = [], []
+        for i in range(actual):
+            lo, hi = edges[i], edges[i + 1]
+            mask = (cost_surface >= lo) & (cost_surface < hi) if i < actual - 1 \
+                   else (cost_surface >= lo) & np.isfinite(cost_surface)
+            classified[mask] = i + 1
+            breaks.append((round(lo, 3), round(hi, 3)))
+            labels.append(f'{lo:.2f} \u2013 {hi:.2f}')
+
+        return {
+            'classified': classified,
+            'breaks': breaks,
+            'colors': colors,
+            'labels': labels,
+            'method': method,
+            'n_classes': actual,
+            'global_min': round(global_min, 3),
+            'global_max': round(global_max, 3),
+        }
+
+    # ------------------------------------------------------------------
+    # 7. RENDERING  (QGIS speckle + colour ramp)
+    # ------------------------------------------------------------------
+    def render_classified_image(self, classified_array, colors, noise_seed=42):
+        """
+        Render classified array → RGBA PNG with per-pixel speckle noise.
+        Full opacity so all 5 colors are clearly visible on the map.
+        """
+        h, w = classified_array.shape
+        rng = np.random.default_rng(noise_seed)
+        noise = rng.integers(-8, 9, size=(h, w), dtype=np.int16)
+        rgba = np.zeros((h, w, 4), dtype=np.uint8)
+        for idx, (r, g, b) in enumerate(colors):
+            mask = classified_array == (idx + 1)
+            rgba[mask, 0] = np.clip(r + noise[mask], 0, 255).astype(np.uint8)
+            rgba[mask, 1] = np.clip(g + noise[mask], 0, 255).astype(np.uint8)
+            rgba[mask, 2] = np.clip(b + (noise[mask] // 2), 0, 255).astype(np.uint8)
+            rgba[mask, 3] = 255   # fully opaque — Leaflet opacity controls transparency
+        return rgba
+
+    # ------------------------------------------------------------------
+    # 8. LEAST-COST PATH  (Using skimage.graph.route_through_array)
+    # ------------------------------------------------------------------
+    def least_cost_path_skimage(self, cost_surface, start_rc, end_rc):
+        """
+        QGIS-style least-cost path using skimage.graph.route_through_array.
         
-        cost_surface = Σ(weight_i × raster_i)
+        This is the RECOMMENDED method as it exactly replicates QGIS behavior:
+        - Uses Dijkstra's algorithm internally
+        - Diagonal movement cost = 1.414 (geometric=True)
+        - 8-directional movement (fully_connected=True)
+        - Minimizes accumulated cost (NOT straight-line distance)
         
         Args:
-            cost_rasters: Dict of {layer_name: cost_raster}
-            normalized_weights: Dict of {layer_name: normalized_weight}
+            cost_surface: 2D float32 array (traversal cost per pixel)
+            start_rc: (row, col) start pixel
+            end_rc: (row, col) end pixel
             
         Returns:
-            Combined cost surface numpy array
+            dict with:
+                - path: list of (row, col) pixels
+                - total_cost: accumulated cost along path
         """
-        logger.info("Computing weighted overlay...")
+        try:
+            from skimage.graph import route_through_array
+        except ImportError:
+            logger.error("skimage not installed. Install with: pip install scikit-image")
+            return self.least_cost_path_dijkstra(cost_surface, start_rc, end_rc)
         
-        # Initialize with zeros
-        height, width = list(cost_rasters.values())[0].shape
-        cost_surface = np.zeros((height, width), dtype=np.float32)
+        h, w = cost_surface.shape
         
-        # Weighted sum
-        for layer_name, cost_raster in cost_rasters.items():
-            weight = normalized_weights.get(layer_name, 0)
-            cost_surface += weight * cost_raster
-            logger.info(f"  Added {layer_name} (weight: {weight:.3f})")
+        # Clamp coordinates to valid range
+        sr, sc = (max(0, min(h - 1, int(start_rc[0]))),
+                  max(0, min(w - 1, int(start_rc[1]))))
+        er, ec = (max(0, min(h - 1, int(end_rc[0]))),
+                  max(0, min(w - 1, int(end_rc[1]))))
         
-        logger.info(f"✓ Weighted overlay computed. Min: {cost_surface.min():.2f}, Max: {cost_surface.max():.2f}")
+        logger.info(f"🔍 Pathfinding: start=({sr},{sc}) end=({er},{ec})")
+        logger.info(f"🔍 Cost surface: shape={cost_surface.shape}, "
+                   f"min={cost_surface.min():.2f}, max={cost_surface.max():.2f}")
         
-        return cost_surface
+        try:
+            # CRITICAL PARAMETERS:
+            # - geometric=True: diagonal movement cost = sqrt(2) ≈ 1.414
+            # - fully_connected=True: 8-directional movement (N,NE,E,SE,S,SW,W,NW)
+            indices, total_cost = route_through_array(
+                cost_surface,
+                start=(sr, sc),
+                end=(er, ec),
+                geometric=True,        # Diagonal cost = 1.414
+                fully_connected=True   # 8-direction movement
+            )
+            
+            # Convert to list of tuples
+            path = [(int(r), int(c)) for r, c in indices]
+            
+            logger.info(f"✓ Least-cost path: {len(path)} pixels, "
+                       f"accumulated cost={total_cost:.2f}")
+            
+            return {
+                'path': path,
+                'total_cost': float(total_cost),
+                'num_pixels': len(path)
+            }
+            
+        except Exception as e:
+            logger.error(f"route_through_array failed: {e}")
+            # Fallback to manual Dijkstra
+            return self.least_cost_path_dijkstra(cost_surface, start_rc, end_rc)
     
-    def find_least_cost_path_astar(self, cost_surface, start_point, end_point, bounds):
+    def least_cost_path_dijkstra(self, cost_surface, start_rc, end_rc):
         """
-        Step 5: Least-cost path using A* algorithm.
+        Manual Dijkstra implementation (fallback if skimage not available).
         
         Args:
-            cost_surface: 2D numpy array of cost values
-            start_point: (lat, lon)
-            end_point: (lat, lon)
-            bounds: [min_lon, min_lat, max_lon, max_lat]
-            
+            cost_surface: 2D float32 array
+            start_rc: (row, col) start pixel
+            end_rc:   (row, col) end pixel
+
         Returns:
-            List of (row, col) coordinates forming the path
+            dict with path and total_cost
         """
-        from heapq import heappop, heappush
-        
-        height, width = cost_surface.shape
-        
-        # Convert lat/lon to pixel coordinates
-        def latlon_to_pixel(lat, lon):
-            row = int((bounds[3] - lat) / (bounds[3] - bounds[1]) * height)
-            col = int((lon - bounds[0]) / (bounds[2] - bounds[0]) * width)
-            return (row, col)
-        
-        start = latlon_to_pixel(start_point[0], start_point[1])
-        end = latlon_to_pixel(end_point[0], end_point[1])
-        
-        # Clamp to bounds
-        start = (max(0, min(height-1, start[0])), max(0, min(width-1, start[1])))
-        end = (max(0, min(height-1, end[0])), max(0, min(width-1, end[1])))
-        
-        logger.info(f"A* search: {start} → {end}")
-        
-        # A* algorithm
-        def heuristic(a, b):
-            """Euclidean distance"""
-            return ((a[0] - b[0])**2 + (a[1] - b[1])**2) ** 0.5
-        
-        def get_neighbors(pos):
-            """8-connected neighbors"""
-            row, col = pos
-            neighbors = []
-            for dr in [-1, 0, 1]:
-                for dc in [-1, 0, 1]:
+        from heapq import heappush, heappop
+
+        h, w = cost_surface.shape
+        INF = float('inf')
+
+        sr, sc = (max(0, min(h - 1, start_rc[0])),
+                  max(0, min(w - 1, start_rc[1])))
+        er, ec = (max(0, min(h - 1, end_rc[0])),
+                  max(0, min(w - 1, end_rc[1])))
+
+        dist = np.full((h, w), INF, dtype=np.float64)
+        dist[sr, sc] = 0.0
+        prev = {}
+        heap = [(0.0, sr, sc)]
+
+        while heap:
+            d, r, c = heappop(heap)
+            if d > dist[r, c]:
+                continue
+            if r == er and c == ec:
+                break
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
                     if dr == 0 and dc == 0:
                         continue
-                    nr, nc = row + dr, col + dc
-                    if 0 <= nr < height and 0 <= nc < width:
-                        neighbors.append((nr, nc))
-            return neighbors
-        
-        # Priority queue: (f_score, counter, position)
-        counter = 0
-        open_set = [(heuristic(start, end), counter, start)]
-        came_from = {}
-        g_score = {start: 0}
-        closed_set = set()
-        
-        logger.info("Running A* algorithm...")
-        
-        while open_set:
-            _, _, current = heappop(open_set)
-            
-            if current == end:
-                # Reconstruct path
-                path = [current]
-                while current in came_from:
-                    current = came_from[current]
-                    path.append(current)
-                path.reverse()
-                logger.info(f"✓ Path found: {len(path)} nodes")
-                return path
-            
-            closed_set.add(current)
-            
-            for neighbor in get_neighbors(current):
-                if neighbor in closed_set:
-                    continue
-                
-                # Movement cost (diagonal = sqrt(2))
-                dr = abs(neighbor[0] - current[0])
-                dc = abs(neighbor[1] - current[1])
-                move_cost = 1.414 if (dr == 1 and dc == 1) else 1.0
-                
-                tentative_g = g_score[current] + cost_surface[neighbor[0], neighbor[1]] * move_cost
-                
-                if neighbor not in g_score or tentative_g < g_score[neighbor]:
-                    came_from[neighbor] = current
-                    g_score[neighbor] = tentative_g
-                    f_score = tentative_g + heuristic(neighbor, end)
-                    counter += 1
-                    heappush(open_set, (f_score, counter, neighbor))
-        
-        logger.warning("No path found!")
-        return []
-    
-    def export_cost_surface_geotiff(self, cost_surface, bounds, output_path):
-        """
-        Step 4: Save cost surface as GeoTIFF.
-        """
-        height, width = cost_surface.shape
-        
-        transform = from_bounds(
-            bounds[0], bounds[1], bounds[2], bounds[3],
-            width, height
-        )
-        
-        with rasterio.open(
-            output_path,
-            'w',
-            driver='GTiff',
-            height=height,
-            width=width,
-            count=1,
-            dtype=np.float32,
-            crs='EPSG:4326',
-            transform=transform,
-        ) as dst:
-            dst.write(cost_surface, 1)
-        
-        logger.info(f"✓ Cost surface saved: {output_path}")
-    
-    def export_cost_surface_png(self, cost_surface, bounds, output_path):
-        """
-        Step 7: Export cost surface as PNG with color ramp.
-        Green = low, Yellow = medium, Red = high
-        """
-        # Normalize to 0-255
-        min_val = np.nanmin(cost_surface)
-        max_val = np.nanmax(cost_surface)
+                    nr, nc = r + dr, c + dc
+                    if not (0 <= nr < h and 0 <= nc < w):
+                        continue
+                    move = 1.4142135623730951 if (dr != 0 and dc != 0) else 1.0
+                    nd = d + float(cost_surface[nr, nc]) * move
+                    if nd < dist[nr, nc]:
+                        dist[nr, nc] = nd
+                        prev[(nr, nc)] = (r, c)
+                        heappush(heap, (nd, nr, nc))
 
-        if max_val > min_val:
-            normalized = ((cost_surface - min_val) / (max_val - min_val) * 255).astype(np.uint8)
-        else:
-            normalized = np.zeros_like(cost_surface, dtype=np.uint8)
-
-        # Vectorized green → yellow → red ramp
-        val = normalized.astype(np.float32)
-        height, width = val.shape
-        r = np.zeros_like(val)
-        g = np.zeros_like(val)
-        b = np.zeros_like(val)
-
-        mask_low = val < 85
-        mask_mid = (val >= 85) & (val < 170)
-        mask_high = val >= 170
-
-        # Low band: pure-green (0,255,0) → forest-green (34,139,34)
-        f = val / 85.0
-        r = np.where(mask_low, f * 34.0, r)
-        g = np.where(mask_low, f * 139.0 + (1.0 - f) * 255.0, g)
-        b = np.where(mask_low, f * 34.0, b)
-
-        # Mid band: forest-green (34,139,34) → yellow (255,255,0)
-        t_mid = (val - 85.0) / 85.0
-        r = np.where(mask_mid, 34.0 + t_mid * 221.0, r)
-        g = np.where(mask_mid, 139.0 + t_mid * 116.0, g)
-        b = np.where(mask_mid, 34.0 - t_mid * 34.0, b)
-
-        # High band: yellow (255,255,0) → red (255,0,0)
-        t_high = (val - 170.0) / 85.0
-        r = np.where(mask_high, 255.0, r)
-        g = np.where(mask_high, 255.0 - t_high * 255.0, g)
-        b = np.where(mask_high, 0.0, b)
-
-        rgba_image = np.zeros((height, width, 4), dtype=np.uint8)
-        rgba_image[..., 0] = np.clip(r, 0, 255).astype(np.uint8)
-        rgba_image[..., 1] = np.clip(g, 0, 255).astype(np.uint8)
-        rgba_image[..., 2] = np.clip(b, 0, 255).astype(np.uint8)
-        rgba_image[..., 3] = 200
-
-        img = Image.fromarray(rgba_image, 'RGBA')
-        img.save(output_path)
-
-        logger.info(f"✓ Cost surface PNG saved: {output_path}")
-    
-    def export_route_shapefile(self, path_pixels, bounds, output_path, shape=None):
-        """
-        Step 6: Convert path to LineString and save as Shapefile.
-        """
-        if shape is None:
-            # Default shape - will be overridden by actual path dimensions
-            height = 100
-            width = 100
-        else:
-            height, width = shape
+        # reconstruct
+        if dist[er, ec] == INF:
+            logger.warning("Dijkstra: no path found")
+            return {'path': [], 'total_cost': INF, 'num_pixels': 0}
         
-        def pixel_to_latlon(row, col):
-            lat = bounds[3] - (row / height) * (bounds[3] - bounds[1])
-            lon = bounds[0] + (col / width) * (bounds[2] - bounds[0])
-            return (lon, lat)  # Shapely uses (x, y) = (lon, lat)
+        path = []
+        cur = (er, ec)
+        while cur in prev:
+            path.append(cur)
+            cur = prev[cur]
+        path.append((sr, sc))
+        path.reverse()
         
-        # Convert pixels to coordinates
-        coords = [pixel_to_latlon(row, col) for row, col in path_pixels]
-        
-        # Create LineString
-        line = LineString(coords)
-        
-        # Create GeoDataFrame
-        gdf = gpd.GeoDataFrame({'name': ['Least Cost Route']}, geometry=[line], crs='EPSG:4326')
-        
-        # Save to Shapefile
-        gdf.to_file(output_path)
-        
-        logger.info(f"✓ Route saved: {output_path}")
-    
-    def run_full_pipeline(self, layers_config, start_point, end_point, bounds=None, resolution=None):
-        """
-        Run complete QGIS-style cost surface and routing pipeline.
-        
-        Args:
-            layers_config: Dict with layer configs
-                {
-                    "protected_areas": {"enabled": True, "weight": 0.2, "path": "..."},
-                    "rivers": {"enabled": True, "weight": 0.2, "path": "..."},
-                    ...
-                }
-            start_point: (lat, lon)
-            end_point: (lat, lon)
-            bounds: [min_lon, min_lat, max_lon, max_lat]
-            resolution: Pixel size in degrees
-            
-        Returns:
-            Dict with output file paths and metadata
-        """
-        start_time = time.time()
-        
-        # Use Uganda bounds if not provided
-        if bounds is None:
-            bounds = self.uganda_bounds
-        
-        # Calculate shape from resolution
-        if resolution is None:
-            resolution = self.default_resolution
-        
-        width = int((bounds[2] - bounds[0]) / resolution)
-        height = int((bounds[3] - bounds[1]) / resolution)
-        shape = (height, width)
-        
-        logger.info(f"Starting QGIS-style pipeline...")
-        logger.info(f"  Bounds: {bounds}")
-        logger.info(f"  Shape: {shape}")
-        logger.info(f"  Start: {start_point}, End: {end_point}")
-        
-        # Step 1 & 2: Prepare and reclassify rasters
-        cost_rasters = {}
-        
-        layer_reclass_funcs = {
-            'protected_areas': self.reclassify_protected_areas,
-            'rivers': self.reclassify_water_distance,
-            'wetlands': self.reclassify_wetlands,
-            'lakes': self.reclassify_water_distance,
-            'land_use': self.reclassify_land_use,
-            'elevation': lambda data, *args: self.reclassify_elevation_slope(data),
-        }
-        
-        for layer_name, config in layers_config.items():
-            if not config.get('enabled', False):
-                continue
-            
-            path = config.get('path')
-            if not path or not os.path.exists(path):
-                logger.warning(f"Layer {layer_name}: File not found: {path}")
-                continue
-            
-            reclass_func = layer_reclass_funcs.get(layer_name)
-            
-            # Determine if vector or raster
-            if path.endswith(('.tif', '.tiff')):
-                # Raster
-                cost_raster = self.prepare_raster_from_raster(
-                    path, bounds, shape, reclass_func
-                )
-            else:
-                # Vector
-                cost_raster = self.prepare_raster_from_vector(
-                    path, bounds, shape, reclass_func
-                )
-            
-            cost_rasters[layer_name] = cost_raster
-        
-        if not cost_rasters:
-            raise ValueError("No valid layers enabled")
-        
-        # Step 3: Normalize weights
-        selected_weights = {
-            name: config['weight']
-            for name, config in layers_config.items()
-            if config.get('enabled', False) and name in cost_rasters
-        }
-        
-        normalized_weights = self.normalize_weights(selected_weights)
-        logger.info(f"Normalized weights: {normalized_weights}")
-        
-        # Step 4: Weighted overlay
-        cost_surface = self.compute_weighted_overlay(cost_rasters, normalized_weights)
-        
-        # Save cost surface GeoTIFF
-        cost_surface_path = os.path.join(self.output_dir, 'cost_surface.tif')
-        self.export_cost_surface_geotiff(cost_surface, bounds, cost_surface_path)
-        
-        # Save cost surface PNG
-        cost_surface_png_path = os.path.join(self.output_dir, 'cost_surface.png')
-        self.export_cost_surface_png(cost_surface, bounds, cost_surface_png_path)
-        
-        # Step 5: Least-cost path
-        path_pixels = self.find_least_cost_path_astar(
-            cost_surface, start_point, end_point, bounds
-        )
-        
-        # Step 6: Export route
-        route_path = os.path.join(self.output_dir, 'route.shp')
-        if path_pixels:
-            self.export_route_shapefile(path_pixels, bounds, route_path, shape=shape)
-        
-        elapsed = time.time() - start_time
+        logger.info(f"✓ Dijkstra path: {len(path)} pixels, "
+                    f"accumulated cost={dist[er,ec]:.2f}")
         
         return {
-            'cost_surface_tif': cost_surface_path,
-            'cost_surface_png': cost_surface_png_path,
-            'route_shp': route_path if path_pixels else None,
+            'path': path,
+            'total_cost': float(dist[er, ec]),
+            'num_pixels': len(path)
+        }
+
+    # ------------------------------------------------------------------
+    # COORDINATE HELPERS (Using rasterio transform)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def latlon_to_pixel_transform(lat, lon, transform):
+        """
+        Convert lat/lon to pixel coordinates using rasterio transform.
+        This is the CORRECT method for coordinate mapping.
+        
+        Args:
+            lat, lon: Geographic coordinates (WGS84)
+            transform: rasterio.Affine transform
+            
+        Returns:
+            (row, col) pixel coordinates
+        """
+        try:
+            # rasterio uses (x, y) = (lon, lat) order
+            col, row = ~transform * (lon, lat)
+            return (int(round(row)), int(round(col)))
+        except Exception as e:
+            logger.warning(f"Transform failed: {e}, using fallback")
+            return None
+    
+    @staticmethod
+    def pixel_to_latlon_transform(row, col, transform):
+        """
+        Convert pixel coordinates to lat/lon using rasterio transform.
+        
+        Args:
+            row, col: Pixel coordinates
+            transform: rasterio.Affine transform
+            
+        Returns:
+            (lat, lon) geographic coordinates
+        """
+        try:
+            # Get center of pixel
+            lon, lat = transform * (col + 0.5, row + 0.5)
+            return (lat, lon)
+        except Exception as e:
+            logger.warning(f"Transform failed: {e}")
+            return None
+    
+    @staticmethod
+    def latlon_to_pixel(lat, lon, bounds, shape):
+        """
+        Simple lat/lon to pixel conversion (fallback method).
+        Use latlon_to_pixel_transform() when transform is available.
+        """
+        h, w = shape
+        row = int((bounds[3] - lat) / (bounds[3] - bounds[1]) * h)
+        col = int((lon - bounds[0]) / (bounds[2] - bounds[0]) * w)
+        return (max(0, min(h - 1, row)), max(0, min(w - 1, col)))
+
+    @staticmethod
+    def pixel_to_latlon(row, col, bounds, shape):
+        """
+        Simple pixel to lat/lon conversion (fallback method).
+        Use pixel_to_latlon_transform() when transform is available.
+        """
+        h, w = shape
+        lat = bounds[3] - (row / h) * (bounds[3] - bounds[1])
+        lon = bounds[0] + (col / w) * (bounds[2] - bounds[0])
+        return lat, lon
+
+    @staticmethod
+    def path_pixels_to_coords(path_pixels, bounds, shape):
+        """Convert list of (row,col) to [[lon,lat], ...] GeoJSON coordinates."""
+        coords = []
+        h, w = shape
+        for r, c in path_pixels:
+            lat = bounds[3] - (r / h) * (bounds[3] - bounds[1])
+            lon = bounds[0] + (c / w) * (bounds[2] - bounds[0])
+            coords.append([lon, lat])
+        return coords
+    
+    @staticmethod
+    def path_pixels_to_coords_transform(path_pixels, transform):
+        """
+        Convert list of (row,col) to [[lon,lat], ...] using rasterio transform.
+        This is the CORRECT method for coordinate conversion.
+        """
+        coords = []
+        for r, c in path_pixels:
+            lon, lat = transform * (c + 0.5, r + 0.5)
+            coords.append([lon, lat])
+        return coords
+
+    # ------------------------------------------------------------------
+    # EXPORT HELPERS
+    # ------------------------------------------------------------------
+    def export_cost_surface_geotiff(self, cost_surface, bounds, output_path):
+        h, w = cost_surface.shape
+        transform = from_bounds(bounds[0], bounds[1], bounds[2], bounds[3], w, h)
+        with rasterio.open(output_path, 'w', driver='GTiff',
+                           height=h, width=w, count=1,
+                           dtype=np.float32, crs='EPSG:4326',
+                           transform=transform) as dst:
+            dst.write(cost_surface, 1)
+        logger.info(f"✓ GeoTIFF saved: {output_path}")
+
+    def export_route_geojson(self, path_pixels, bounds, shape):
+        """Return a GeoJSON Feature dict for the route."""
+        coords = self.path_pixels_to_coords(path_pixels, bounds, shape)
+        return {
+            'type': 'Feature',
+            'properties': {'name': 'Least-Cost Route'},
+            'geometry': {'type': 'LineString', 'coordinates': coords},
+        }
+
+    # ------------------------------------------------------------------
+    # BACKWARD-COMPAT WRAPPERS  (used by routes_api.py)
+    # ------------------------------------------------------------------
+    def prepare_raster_from_vector(self, vector_path, bounds, shape,
+                                   reclassify_func=None, column=None):
+        binary = self.load_and_rasterize_vector(vector_path, bounds, shape)
+        if reclassify_func:
+            try:
+                gdf = gpd.read_file(vector_path)
+                transform = from_bounds(bounds[0], bounds[1], bounds[2], bounds[3],
+                                        shape[1], shape[0])
+                return reclassify_func(binary, gdf, bounds, transform).astype(np.float32)
+            except Exception:
+                pass
+        return np.where(binary > 0, 100.0, 1.0).astype(np.float32)
+
+    def prepare_raster_from_raster(self, raster_path, bounds, shape,
+                                   reclassify_func=None):
+        data = self.load_and_resample_raster(raster_path, bounds, shape)
+        if reclassify_func:
+            try:
+                return reclassify_func(data).astype(np.float32)
+            except Exception:
+                pass
+        return data.astype(np.float32)
+
+    def reclassify_protected_areas(self, rasterized, gdf, bounds, transform):
+        return self.friction_barrier(rasterized, inside_cost=100, outside_cost=1)
+
+    def reclassify_water_distance(self, rasterized, gdf, bounds, transform):
+        return self.friction_distance_penalty(rasterized, bounds, rasterized.shape)
+
+    def reclassify_wetlands(self, rasterized, gdf, bounds, transform):
+        return self.friction_barrier(rasterized, inside_cost=90, outside_cost=1)
+
+    def reclassify_land_use(self, rasterized, gdf, bounds, transform):
+        return self.friction_land_use(rasterized, bounds, rasterized.shape)
+
+    def reclassify_elevation_slope(self, elevation_data):
+        return self.friction_elevation_slope(elevation_data)
+
+    # ------------------------------------------------------------------
+    # FULL PIPELINE  (called by routes_qgis_api.py)
+    # ------------------------------------------------------------------
+    def run_full_pipeline(self, layers_config, start_point, end_point,
+                          bounds=None, resolution=None, generate_route=True,
+                          algorithm='dijkstra'):
+        """
+        QGIS-style cost surface analysis and least-cost path routing.
+        
+        WORKFLOW:
+        1. Cost Surface Creation - Generate weighted overlay raster
+        2. Coordinate → Pixel Mapping - Convert lat/lon to pixel indices
+        3. Raster-based Pathfinding - Use skimage.graph.route_through_array
+        4. Path Reconstruction - Convert pixels back to geographic coordinates
+        5. GeoJSON Export - Create LineString for display
+
+        Args:
+            layers_config: {name: {enabled, weight, path, type}}
+            start_point: (lat, lon) tuple
+            end_point: (lat, lon) tuple
+            bounds: [min_lon, min_lat, max_lon, max_lat]
+            resolution: pixel size in degrees (None → use resolution_m=100)
+            generate_route: If False, ONLY generate cost surface (no routing)
+            algorithm: 'dijkstra' (skimage) or 'astar' (fallback)
+            
+        Returns:
+            dict with cost_surface_tif, cost_surface_png, route_shp, metadata
+        """
+        t0 = time.time()
+        if bounds is None:
+            bounds = self.uganda_bounds
+        resolution_m = 100 if resolution is None else int(resolution * 111320)
+        
+        # Step 1: Build base grid and get transform
+        shape, transform = self.build_base_grid(bounds, resolution_m=resolution_m)
+        
+        logger.info("=" * 60)
+        logger.info("QGIS-STYLE COST SURFACE ANALYSIS")
+        logger.info("=" * 60)
+        logger.info(f"📐 Raster shape: {shape[1]} × {shape[0]} pixels")
+        logger.info(f"📏 Resolution: {resolution_m}m per pixel")
+        logger.info(f"🗺️  Bounds: {bounds}")
+        logger.info(f"🔧 Transform: {transform}")
+
+        # Step 2: Load and process layers
+        layer_reclass = {
+            'protected_areas': self.reclassify_protected_areas,
+            'rivers':          self.reclassify_water_distance,
+            'wetlands':        self.reclassify_wetlands,
+            'lakes':           self.reclassify_water_distance,
+            'land_use':        self.reclassify_land_use,
+            'elevation':       (lambda d, *a: self.reclassify_elevation_slope(d)),
+            'settlements':     self.reclassify_water_distance,
+            'roads':           self.reclassify_water_distance,
+        }
+
+        raw_rasters, weights_raw = {}, {}
+        for name, cfg in layers_config.items():
+            if not cfg.get('enabled', False):
+                continue
+            path = cfg.get('path')
+            if not path or not os.path.exists(path):
+                logger.warning(f"⚠️  {name}: path not found")
+                continue
+            fn = layer_reclass.get(name)
+            if path.lower().endswith(('.tif', '.tiff')):
+                r = self.prepare_raster_from_raster(path, bounds, shape, fn)
+            else:
+                r = self.prepare_raster_from_vector(path, bounds, shape, fn)
+            raw_rasters[name] = r
+            weights_raw[name] = float(cfg.get('weight', 1.0))
+            logger.info(f"✓ {name}: loaded, weight={weights_raw[name]:.3f}")
+
+        if not raw_rasters:
+            raise ValueError("No valid layers loaded")
+
+        # Step 3: Normalize and create weighted overlay (COST SURFACE)
+        logger.info("-" * 60)
+        logger.info("COST SURFACE GENERATION")
+        logger.info("-" * 60)
+        
+        norm_layers = {n: self.normalize_to_1_10(r) for n, r in raw_rasters.items()}
+        norm_weights = self.normalize_weights(weights_raw)
+        cost_surface = self.weighted_overlay(norm_layers, norm_weights, debug=True)
+        
+        logger.info(f"📊 Cost Surface Statistics:")
+        logger.info(f"   Min: {cost_surface.min():.3f}")
+        logger.info(f"   Max: {cost_surface.max():.3f}")
+        logger.info(f"   Mean: {cost_surface.mean():.3f}")
+        logger.info(f"   Std: {cost_surface.std():.3f}")
+
+        # Step 4: Export cost surface as GeoTIFF
+        tif_path = os.path.join(self.output_dir, 'cost_surface.tif')
+        self.export_cost_surface_geotiff(cost_surface, bounds, tif_path)
+
+        # Step 5: Classify and render cost surface
+        cls = self.classify_cost_surface(cost_surface, n_classes=5, method='quantile')
+        rgba = self.render_classified_image(cls['classified'], cls['colors'])
+        png_path = os.path.join(self.output_dir, 'cost_surface.png')
+        Image.fromarray(rgba, 'RGBA').save(png_path)
+        
+        logger.info(f"✓ Cost surface saved: {tif_path}")
+        logger.info(f"✓ Visualization saved: {png_path}")
+
+        # Step 6: ROUTING (only if generate_route=True)
+        route_shp = None
+        route_geojson = None
+        path_result = None
+        
+        if generate_route and start_point and end_point:
+            logger.info("-" * 60)
+            logger.info("LEAST-COST PATH ROUTING")
+            logger.info("-" * 60)
+            logger.info(f"📍 Start: {start_point}")
+            logger.info(f"📍 End: {end_point}")
+            
+            # Step 6a: Coordinate → Pixel Mapping (CRITICAL)
+            start_rc = self.latlon_to_pixel_transform(start_point[0], start_point[1], transform)
+            end_rc = self.latlon_to_pixel_transform(end_point[0], end_point[1], transform)
+            
+            # Fallback if transform fails
+            if start_rc is None:
+                start_rc = self.latlon_to_pixel(start_point[0], start_point[1], bounds, shape)
+            if end_rc is None:
+                end_rc = self.latlon_to_pixel(end_point[0], end_point[1], bounds, shape)
+            
+            logger.info(f"🔍 Start pixel: {start_rc}")
+            logger.info(f"🔍 End pixel: {end_rc}")
+            
+            # Step 6b: Raster-based Pathfinding (CORE ENGINE)
+            if algorithm == 'skimage' or algorithm == 'dijkstra':
+                path_result = self.least_cost_path_skimage(cost_surface, start_rc, end_rc)
+            else:
+                path_result = self.least_cost_path_dijkstra(cost_surface, start_rc, end_rc)
+            
+            path_px = path_result.get('path', [])
+            
+            if path_px:
+                logger.info(f"✓ Path found: {len(path_px)} pixels")
+                logger.info(f"✓ Total cost: {path_result.get('total_cost', 0):.2f}")
+                
+                # Step 6c: Path Reconstruction (pixel → geographic)
+                coords = self.path_pixels_to_coords_transform(path_px, transform)
+                
+                # Step 6d: Convert to LineString and export
+                line = LineString([(c[0], c[1]) for c in coords])
+                gdf = gpd.GeoDataFrame({'name': ['route']}, geometry=[line], crs='EPSG:4326')
+                route_shp = os.path.join(self.output_dir, 'route.shp')
+                gdf.to_file(route_shp)
+                
+                # Step 6e: Create GeoJSON for display
+                route_geojson = {
+                    'type': 'Feature',
+                    'properties': {
+                        'name': 'Least-Cost Route',
+                        'total_cost': path_result.get('total_cost', 0),
+                        'num_pixels': len(path_px),
+                        'algorithm': algorithm
+                    },
+                    'geometry': {
+                        'type': 'LineString',
+                        'coordinates': coords
+                    }
+                }
+                
+                logger.info(f"✓ Route exported: {route_shp}")
+            else:
+                logger.warning("❌ No path found")
+        else:
+            logger.info("ℹ️  Route generation skipped (generate_route=False)")
+
+        elapsed = time.time() - t0
+        logger.info("=" * 60)
+        logger.info(f"✓ Pipeline completed in {elapsed:.2f}s")
+        logger.info("=" * 60)
+
+        return {
+            'cost_surface_tif': tif_path,
+            'cost_surface_png': png_path,
+            'route_shp': route_shp,
+            'route_geojson': route_geojson,
             'bounds': bounds,
+            'transform': str(transform),
             'metadata': {
-                'resolution': resolution,
-                'shape': shape,
-                'weights': normalized_weights,
+                'resolution_m': resolution_m,
+                'shape': list(shape),
+                'weights': norm_weights,
                 'min_cost': float(cost_surface.min()),
                 'max_cost': float(cost_surface.max()),
                 'mean_cost': float(cost_surface.mean()),
-                'path_length_nodes': len(path_pixels),
-                'processing_time_s': round(elapsed, 2)
-            }
+                'path_length_nodes': len(path_result.get('path', [])) if path_result else 0,
+                'total_cost': float(path_result.get('total_cost', 0)) if path_result else 0,
+                'algorithm': algorithm,
+                'processing_time_s': round(elapsed, 2),
+            },
         }
+
+
+# ---------------------------------------------------------------------------
+# MODULE-LEVEL HELPERS
+# ---------------------------------------------------------------------------
+def _lerp_color(c1, c2, t):
+    return (c1[0] + (c2[0] - c1[0]) * t,
+            c1[1] + (c2[1] - c1[1]) * t,
+            c1[2] + (c2[2] - c1[2]) * t)
+
+
+# kept for any external callers
+def run_full_pipeline_standalone(analyzer, layers_config, start_point, end_point,
+                                 bounds=None, resolution=None):
+    return analyzer.run_full_pipeline(layers_config, start_point, end_point,
+                                      bounds=bounds, resolution=resolution)

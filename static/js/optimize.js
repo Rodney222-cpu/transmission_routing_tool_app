@@ -18,7 +18,8 @@ let ahpWeights = {
 let waypoints = [];
 
 /**
- * Clear previous route and results before running new optimization
+ * Clear previous route and results before running new optimization.
+ * Resets ALL state — map layers, UI panels, cached project ID.
  */
 function clearPreviousRoute() {
     // Remove route layer from map
@@ -26,33 +27,48 @@ function clearPreviousRoute() {
         map.removeLayer(window.routeLayer);
         window.routeLayer = null;
     }
-    
+
     // Remove tower markers
     if (window.towerMarkers) {
         window.towerMarkers.forEach(marker => map.removeLayer(marker));
         window.towerMarkers = [];
     }
-    
-    // Clear route analysis results
+
+    // Clear route analysis results (hide section but preserve DOM structure)
     const resultsSection = document.getElementById('resultsSection');
     if (resultsSection) {
         resultsSection.style.display = 'none';
-        resultsSection.innerHTML = '';
     }
-    
-    // Clear route metrics
-    const routeMetrics = document.getElementById('routeMetrics');
-    if (routeMetrics) {
-        routeMetrics.innerHTML = '';
-    }
-    
+
+    // Clear individual content containers without destroying the DOM structure
+    ['routeMetrics', 'costBreakdown'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
+
+    // Destroy existing charts so they can be recreated cleanly
+    ['avoidanceChart', 'elevationChart'].forEach(id => {
+        const canvas = document.getElementById(id);
+        if (canvas) {
+            const existing = Chart.getChart(canvas);
+            if (existing) existing.destroy();
+        }
+    });
+
     // Hide generate towers button
     const generateTowersBtn = document.getElementById('generateTowersBtn');
     if (generateTowersBtn) {
         generateTowersBtn.style.display = 'none';
     }
-    
-    console.log('✓ Cleared previous route and results');
+
+    // Reset cached project ID so we never accidentally reuse a previous run
+    currentProject.projectId = null;
+
+    // Hide algorithm status badge
+    const badge = document.getElementById('algorithmStatusBadge');
+    if (badge) badge.style.display = 'none';
+
+    console.log('✓ Cleared previous route, results, and project ID');
 }
 
 /**
@@ -72,48 +88,35 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('setStartBtn').classList.remove('active');
     });
     
-    // Coordinate input handlers
-    window.updateStartFromCoords = function() {
+    // Coordinate input handlers — called from HTML onchange/onkeydown and ✓ button
+    window.applyStartFromCoords = function() {
         const lat = parseFloat(document.getElementById('startLat').value);
         const lon = parseFloat(document.getElementById('startLon').value);
-        
-        if (!isNaN(lat) && !isNaN(lon)) {
-            currentProject.start = { lat, lon };
-            
-            // Update display
-            document.getElementById('startCoords').textContent = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
-            
-            // Place marker on map
-            if (window.startMarker) {
-                window.startMarker.setLatLng([lat, lon]);
-            } else {
-                window.startMarker = L.marker([lat, lon], {icon: startIcon}).addTo(map);
-            }
-            
-            console.log('✓ Start point set from coordinates:', lat, lon);
+        if (isNaN(lat) || isNaN(lon)) return;
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+            alert('Invalid coordinates. Latitude must be -90 to 90, Longitude -180 to 180.');
+            return;
         }
+        setStartPoint(lat, lon);
+        map.setView([lat, lon], Math.max(map.getZoom(), 10));
     };
-    
-    window.updateEndFromCoords = function() {
+
+    // Keep old name as alias so any existing onchange= calls still work
+    window.updateStartFromCoords = window.applyStartFromCoords;
+
+    window.applyEndFromCoords = function() {
         const lat = parseFloat(document.getElementById('endLat').value);
         const lon = parseFloat(document.getElementById('endLon').value);
-        
-        if (!isNaN(lat) && !isNaN(lon)) {
-            currentProject.end = { lat, lon };
-            
-            // Update display
-            document.getElementById('endCoords').textContent = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
-            
-            // Place marker on map
-            if (window.endMarker) {
-                window.endMarker.setLatLng([lat, lon]);
-            } else {
-                window.endMarker = L.marker([lat, lon], {icon: endIcon}).addTo(map);
-            }
-            
-            console.log('✓ End point set from coordinates:', lat, lon);
+        if (isNaN(lat) || isNaN(lon)) return;
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+            alert('Invalid coordinates. Latitude must be -90 to 90, Longitude -180 to 180.');
+            return;
         }
+        setEndPoint(lat, lon);
+        map.setView([lat, lon], Math.max(map.getZoom(), 10));
     };
+
+    window.updateEndFromCoords = window.applyEndFromCoords;
     
     // AHP weight sliders
     setupWeightSliders();
@@ -134,18 +137,24 @@ document.addEventListener('DOMContentLoaded', function() {
         const slider = document.getElementById(sliderId);
         if (slider) {
             slider.addEventListener('input', function() {
-                // Clear previous timeout
-                if (costSurfaceUpdateTimeout) {
-                    clearTimeout(costSurfaceUpdateTimeout);
-                }
-                
-                // Update cost surface after 1 second delay (debounce)
+                if (costSurfaceUpdateTimeout) clearTimeout(costSurfaceUpdateTimeout);
                 costSurfaceUpdateTimeout = setTimeout(() => {
                     if (document.getElementById('costSurfaceLegend').style.display === 'block') {
-                        // Only auto-update if cost surface is already visible
                         generateCostSurface();
                     }
                 }, 1000);
+            });
+        }
+    });
+
+    // Auto-regenerate when classification method or n_classes changes
+    ['classificationMethod', 'nClasses'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', function() {
+                if (document.getElementById('costSurfaceLegend').style.display === 'block') {
+                    generateCostSurface();
+                }
             });
         }
     });
@@ -227,16 +236,16 @@ function addWaypoint() {
         id: waypointId,
         lat: null,
         lon: null,
-        name: `Waypoint ${waypoints.length + 1}`
+        name: `Angle Point ${waypoints.length + 1}`
     };
 
     waypoints.push(waypoint);
     renderWaypoints();
 
-    // Enable waypoint selection mode
+    // Enable map-click mode so user can immediately click to place it
     selectionMode = 'waypoint';
     currentWaypointId = waypointId;
-    alert('Click on the map to set waypoint location');
+    document.body.style.cursor = 'crosshair';
 }
 
 /**
@@ -269,20 +278,28 @@ function renderWaypoints() {
 
     let html = '<div class="waypoints-container">';
     waypoints.forEach((wp, index) => {
-        const coords = wp.lat && wp.lon ? `${wp.lat.toFixed(4)}, ${wp.lon.toFixed(4)}` : 'Not set';
+        const coords = wp.lat && wp.lon ? `${wp.lat.toFixed(4)}, ${wp.lon.toFixed(4)}` : 'Not set — click map or enter below';
         html += `
-            <div class="waypoint-item" style="margin-bottom: 8px; padding: 8px; background: #f8f9fa; border-radius: 4px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div style="flex: 1;">
-                        <input type="text" value="${wp.name}"
-                               onchange="updateWaypointName(${wp.id}, this.value)"
-                               style="width: 100%; padding: 2px 5px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;">
-                        <div style="font-size: 10px; color: #666; margin-top: 2px;">${coords}</div>
-                    </div>
+            <div class="waypoint-item" style="margin-bottom: 8px; padding: 8px; background: #f8f9fa; border-radius: 4px; border-left: 3px solid #7b2d8b;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <input type="text" value="${wp.name}"
+                           onchange="updateWaypointName(${wp.id}, this.value)"
+                           style="width: 75%; padding: 2px 5px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;">
                     <button onclick="removeWaypoint(${wp.id})"
-                            style="margin-left: 8px; padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;">
-                        ✕
-                    </button>
+                            style="padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;">✕</button>
+                </div>
+                <div style="font-size: 10px; color: #666; margin-bottom: 4px;">${coords}</div>
+                <div style="display: flex; gap: 3px; align-items: center;">
+                    <input type="number" id="wpLat_${wp.id}" placeholder="Lat" step="any" value="${wp.lat ? wp.lat.toFixed(6) : ''}"
+                           style="width: 40%; padding: 3px; font-size: 10px; border: 1px solid #ccc; border-radius: 3px;"
+                           onkeydown="if(event.key==='Enter') applyWaypointFromCoords(${wp.id})">
+                    <input type="number" id="wpLon_${wp.id}" placeholder="Lon" step="any" value="${wp.lon ? wp.lon.toFixed(6) : ''}"
+                           style="width: 40%; padding: 3px; font-size: 10px; border: 1px solid #ccc; border-radius: 3px;"
+                           onkeydown="if(event.key==='Enter') applyWaypointFromCoords(${wp.id})">
+                    <button onclick="applyWaypointFromCoords(${wp.id})" title="Place marker"
+                            style="padding: 3px 6px; font-size: 11px; background: #7b2d8b; color: white; border: none; border-radius: 3px; cursor: pointer;">✓</button>
+                    <button onclick="pickWaypointOnMap(${wp.id})" title="Pick on map"
+                            style="padding: 3px 6px; font-size: 10px; background: #6c757d; color: white; border: none; border-radius: 3px; cursor: pointer;">📍</button>
                 </div>
             </div>
         `;
@@ -303,143 +320,173 @@ function updateWaypointName(waypointId, newName) {
 }
 
 /**
- * Optimize route using API
+ * Apply waypoint location from coordinate input fields (Enter key or ✓ button)
+ */
+function applyWaypointFromCoords(waypointId) {
+    const lat = parseFloat(document.getElementById(`wpLat_${waypointId}`)?.value);
+    const lon = parseFloat(document.getElementById(`wpLon_${waypointId}`)?.value);
+    if (isNaN(lat) || isNaN(lon)) return;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        alert('Invalid coordinates.');
+        return;
+    }
+    setWaypointLocation(waypointId, lat, lon);
+    map.setView([lat, lon], Math.max(map.getZoom(), 10));
+}
+
+/**
+ * Switch to map-click mode to pick a waypoint location
+ */
+function pickWaypointOnMap(waypointId) {
+    selectionMode = 'waypoint';
+    currentWaypointId = waypointId;
+    document.body.style.cursor = 'crosshair';
+    // Brief visual feedback
+    const wp = waypoints.find(w => w.id === waypointId);
+    const name = wp ? wp.name : 'angle point';
+    console.log(`📍 Click map to place ${name}`);
+}
+
+/**
+ * Optimize route using API.
+ * Always creates a fresh project and runs a full recomputation — no caching.
  */
 async function optimizeRoute() {
-    // Require user to set start and end points (no presets)
     if (!currentProject.start || !currentProject.end) {
         alert('Please set both Start Point and End Point on the map before optimizing.');
         return;
     }
-    // Validate weights
+
     const sum = Object.values(ahpWeights).reduce((a, b) => a + b, 0);
     if (Math.abs(sum - 1.0) > 0.01) {
         alert('AHP weights must sum to 1.0. Current sum: ' + sum.toFixed(2));
         return;
     }
-    
-    // Clear previous route and results BEFORE starting new optimization
+
+    // --- 1. Read algorithm selection FRESH from the DOM ---
+    const algorithmSelect = document.getElementById('algorithmSelect');
+    const compareCheckbox  = document.getElementById('compareAlgorithms');
+    const algorithm  = algorithmSelect ? algorithmSelect.value : 'dijkstra';
+    const doCompare  = compareCheckbox ? compareCheckbox.checked : false;
+
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`🚀 NEW OPTIMIZATION RUN`);
+    console.log(`   Algorithm selected : ${algorithm.toUpperCase()}`);
+    console.log(`   Compare both       : ${doCompare}`);
+    console.log(`   Start              : ${JSON.stringify(currentProject.start)}`);
+    console.log(`   End                : ${JSON.stringify(currentProject.end)}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    // --- 2. Wipe all previous state BEFORE anything else ---
     clearPreviousRoute();
-    
-    // Show loading indicator
+
+    // Update loading text to show which algorithm is running
+    const loadingText = document.getElementById('loadingText');
+    if (loadingText) {
+        loadingText.textContent = `Running ${algorithm.toUpperCase()} algorithm...`;
+    }
     document.getElementById('loadingIndicator').style.display = 'block';
     document.getElementById('optimizeBtn').disabled = true;
-    
+
     try {
-        // Validate waypoints
         const validWaypoints = waypoints.filter(wp => wp.lat && wp.lon);
 
-        // Step 1: Create a NEW project for each optimization (ensures fresh route)
+        // --- 3. Create a brand-new project every single run ---
         const projectData = {
-            name: document.getElementById('projectName').value + '_' + Date.now(),
-            description: 'Automated route optimization',
+            name: (document.getElementById('projectName').value || 'Route') + '_' + Date.now(),
+            description: `Optimization run — algorithm: ${algorithm}`,
             voltage_level: parseInt(document.getElementById('voltageLevel').value),
             tower_type: document.getElementById('towerType').value,
             start: currentProject.start,
             end: currentProject.end,
-            waypoints: validWaypoints.map(wp => ({
-                lat: wp.lat,
-                lon: wp.lon,
-                name: wp.name
-            })),
+            waypoints: validWaypoints.map(wp => ({ lat: wp.lat, lon: wp.lon, name: wp.name })),
             ahp_weights: ahpWeights
         };
 
-        console.log('Creating project with data:', projectData);
-
         const createResponse = await fetch('/api/projects', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(projectData)
         });
 
         if (!createResponse.ok) {
-            const errorData = await createResponse.json();
-            console.error('Project creation failed:', errorData);
-            throw new Error('Failed to create project: ' + (errorData.error || 'Unknown error'));
+            const err = await createResponse.json();
+            throw new Error('Failed to create project: ' + (err.error || 'Unknown error'));
         }
 
         const createResult = await createResponse.json();
+        // Store the new project ID — clearPreviousRoute() already nulled the old one
         currentProject.projectId = createResult.project_id;
-        console.log('Project created with ID:', currentProject.projectId);
+        console.log(`✓ New project created: ID=${currentProject.projectId}`);
 
-        // Step 2: Optimize route (with algorithm selection)
-        const algorithmRadios = document.getElementsByName('algorithm');
-        let algorithm = 'dijkstra';
-        for (const radio of algorithmRadios) {
-            if (radio.checked) {
-                algorithm = radio.value;
-                break;
+        // --- 4. Build request body — algorithm is always read fresh ---
+        const requestBody = doCompare
+            ? { algorithm: algorithm, compare: true }
+            : { algorithm: algorithm };
+
+        console.log(`📤 Sending optimize request:`, requestBody);
+
+        const optimizeResponse = await fetch(
+            `/api/projects/${currentProject.projectId}/optimize`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
             }
-        }
-
-        console.log('🎯 Selected algorithm:', algorithm);
-
-        // Handle "both" option - run comparison
-        let requestBody = {};
-        if (algorithm === 'both') {
-            requestBody = { algorithm: 'dijkstra', compare: true };
-        } else {
-            requestBody = { algorithm: algorithm };
-        }
-
-        console.log('📦 Request body:', requestBody);
-
-        console.log('Starting optimization for project:', currentProject.projectId, 'request:', requestBody);
-        const optimizeResponse = await fetch(`/api/projects/${currentProject.projectId}/optimize`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(requestBody)
-        });
+        );
 
         if (!optimizeResponse.ok) {
-            const errorData = await optimizeResponse.json();
-            console.error('Optimization failed:', errorData);
-            throw new Error('Route optimization failed: ' + (errorData.error || 'Unknown error'));
+            const err = await optimizeResponse.json();
+            throw new Error('Route optimization failed: ' + (err.error || 'Unknown error'));
         }
-        
+
         const result = await optimizeResponse.json();
 
-        console.log('✅ Optimization successful!');
-        console.log('🔍 Algorithm used:', result.algorithm_used);
-        console.log('📍 Route points:', result.route?.geometry?.coordinates?.length || 0);
+        // --- 5. Debug validation log ---
+        const coords = result.route?.geometry?.coordinates || [];
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log(`✅ OPTIMIZATION COMPLETE`);
+        console.log(`   Algorithm used     : ${(result.algorithm_used || algorithm).toUpperCase()}`);
+        console.log(`   Route points       : ${coords.length}`);
+        console.log(`   Route length (km)  : ${(result.cost_breakdown?.total_length_km || 0).toFixed(2)}`);
+        console.log(`   Total cost ($)     : ${(result.cost_breakdown?.total_cost || 0).toFixed(0)}`);
+        console.log(`   Resolution (m)     : ${result.resolution_m || 'n/a'}`);
+        if (result.algorithm_comparison) {
+            const c = result.algorithm_comparison;
+            if (c.dijkstra) console.log(`   Dijkstra cost      : ${c.dijkstra.total_cost?.toFixed(0)}, km: ${c.dijkstra.distance_km?.toFixed(2)}`);
+            if (c.astar)    console.log(`   A* cost            : ${c.astar.total_cost?.toFixed(0)}, km: ${c.astar.distance_km?.toFixed(2)}`);
+        }
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-        // Display route on map (without towers initially)
+        // --- 6. Update map and UI with fresh results ---
         displayRoute(result.route, []);
 
-        // Display results (include algorithm used and comparison if present)
         try {
             displayResults(result);
-            console.log('✅ Results displayed successfully');
         } catch (displayError) {
             console.error('❌ Error displaying results:', displayError);
-            // Don't block the route display if results fail
         }
 
-        if (result.algorithm_comparison) {
-            const comp = result.algorithm_comparison;
-            let msg = 'Algorithm comparison:\n';
-            if (comp.dijkstra) msg += `Dijkstra: cost=${comp.dijkstra.total_cost.toFixed(0)}, points=${comp.dijkstra.path_coords_count}\n`;
-            else msg += 'Dijkstra: no path\n';
-            if (comp.astar) msg += `A*: cost=${comp.astar.total_cost.toFixed(0)}, points=${comp.astar.path_coords_count}`;
-            else msg += 'A*: no path';
-            console.log(msg);
+        // Show algorithm status badge
+        const algoUsed = (result.algorithm_used || algorithm).toUpperCase();
+        const badge = document.getElementById('algorithmStatusBadge');
+        if (badge) {
+            badge.textContent = `✓ Last run: ${algoUsed}  |  ${(result.cost_breakdown?.total_length_km || 0).toFixed(1)} km  |  $${((result.cost_breakdown?.total_cost || 0) / 1e6).toFixed(2)}M`;
+            badge.style.display = 'block';
+            badge.style.background = algoUsed.includes('A*') ? '#e3f2fd' : '#e8f5e9';
+            badge.style.color = algoUsed.includes('A*') ? '#1565c0' : '#2e7d32';
+            badge.style.border = `1px solid ${algoUsed.includes('A*') ? '#90caf9' : '#a5d6a7'}`;
         }
 
-        // Show the "Generate Towers" button
         document.getElementById('generateTowersBtn').style.display = 'block';
 
     } catch (error) {
-        console.error('Optimization error:', error);
+        console.error('❌ Optimization error:', error);
         alert('Error: ' + error.message);
     } finally {
-        // Hide loading indicator
         document.getElementById('loadingIndicator').style.display = 'none';
         document.getElementById('optimizeBtn').disabled = false;
+        if (loadingText) loadingText.textContent = 'Generating optimal route...';
     }
 }
 
@@ -647,28 +694,26 @@ function generateRouteQualityCard(errors, warnings, metrics, result) {
  * Shows how well the route avoids different features using simple visual bars
  */
 function generateRouteOptimalityGraph(errors, warnings, result) {
-    // Get route characteristics for dynamic scoring
-    const costBreakdown = result?.cost_breakdown || {};
+    // Get ACTUAL route data from backend
     const avoidanceMetrics = result?.avoidance_metrics || {};
+    const costBreakdown = result?.cost_breakdown || {};
     
-    const costPerKm = costBreakdown.cost_per_km || 500000;
+    // Use REAL avoidance percentages from backend (not random!)
+    const settlementScore = Math.round(avoidanceMetrics.settlements_clear_pct || 0);
+    const terrainScore = Math.round(avoidanceMetrics.terrain_clear_pct || 0);
+    const waterScore = Math.round(avoidanceMetrics.water_clear_pct || 0);
+    const protectedScore = Math.round(avoidanceMetrics.protected_clear_pct || 0);
+    
+    // Calculate tower spacing score from actual data
     const totalKm = costBreakdown.total_length_km || 0;
     const numTowers = costBreakdown.breakdown?.towers?.quantity || 0;
-    const avgSpan = totalKm > 0 && numTowers > 0 ? (totalKm * 1000) / numTowers : 350;
-    
-    // Calculate dynamic scores based on route characteristics
-    // Settlement avoidance: based on cost per km (higher cost suggests more obstacles)
-    let settlementScore = Math.max(40, Math.min(95, 100 - (costPerKm / 15000)));
-    settlementScore = Math.round(settlementScore + (totalKm > 100 ? -5 : 0) + (Math.random() * 10 - 5));
-    
-    // Terrain score: based on tower spacing (closer to 350m = better)
-    let terrainScore = Math.round(Math.max(40, Math.min(95, (avgSpan / 350) * 100)));
-    
-    // Water score: use actual if available, otherwise estimate
-    let waterScore = Math.round(avoidanceMetrics.water_clear_pct || Math.max(50, Math.min(95, 80 + (Math.random() * 15 - 7.5))));
-    
-    // Tower spacing score: based on how close to optimal 350m
-    let spanScore = Math.round(Math.max(50, Math.min(100, 100 - Math.abs(avgSpan - 350) / 3.5)));
+    const avgSpan = totalKm > 0 && numTowers > 0 ? (totalKm * 1000) / numTowers : 0;
+    const spanScore = avgSpan > 0 ? Math.round(Math.max(50, Math.min(100, 100 - Math.abs(avgSpan - 350) / 3.5))) : 0;
+
+    // If no avoidance metrics available, don't show the graph
+    if (!avoidanceMetrics || Object.keys(avoidanceMetrics).length === 0) {
+        return '<div style="margin-top: 15px; padding: 12px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6; text-align: center; color: #6c757d; font-size: 11px;">📊 Route analysis data not available</div>';
+    }
 
     // Generate color based on score
     function getScoreColor(score) {
@@ -689,49 +734,84 @@ function generateRouteOptimalityGraph(errors, warnings, result) {
         <div style="margin-top: 15px; padding: 12px; background: white; border-radius: 8px; border: 1px solid #dee2e6;">
             <h5 style="margin: 0 0 10px 0; font-size: 13px; color: #333;">📊 Route Optimality Score</h5>
             <p style="margin: 0 0 12px 0; font-size: 10px; color: #666; line-height: 1.4;">
-                Scores vary based on route length, terrain complexity, and tower spacing.
+                Based on actual route analysis - shows percentage of route avoiding each feature.
             </p>
-            
+    `;
+
+    // Only show metrics that are available
+    if (settlementScore > 0) {
+        html += `
             <div style="margin-bottom: 10px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
                     <span style="font-size: 11px; color: #555;">🏘️ Avoiding Settlements</span>
-                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(settlementScore)};">${getScoreEmoji(settlementScore)} ${Math.round(settlementScore)}%</span>
+                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(settlementScore)};">${getScoreEmoji(settlementScore)} ${settlementScore}%</span>
                 </div>
                 <div style="background: #e9ecef; height: 12px; border-radius: 6px; overflow: hidden;">
                     <div style="background: ${getScoreColor(settlementScore)}; height: 100%; width: ${settlementScore}%; transition: width 0.5s ease;"></div>
                 </div>
             </div>
-            
+        `;
+    }
+
+    if (terrainScore > 0) {
+        html += `
             <div style="margin-bottom: 10px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
                     <span style="font-size: 11px; color: #555;">⛰️ Avoiding Difficult Terrain</span>
-                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(terrainScore)};">${getScoreEmoji(terrainScore)} ${Math.round(terrainScore)}%</span>
+                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(terrainScore)};">${getScoreEmoji(terrainScore)} ${terrainScore}%</span>
                 </div>
                 <div style="background: #e9ecef; height: 12px; border-radius: 6px; overflow: hidden;">
                     <div style="background: ${getScoreColor(terrainScore)}; height: 100%; width: ${terrainScore}%; transition: width 0.5s ease;"></div>
                 </div>
             </div>
-            
+        `;
+    }
+
+    if (waterScore > 0) {
+        html += `
             <div style="margin-bottom: 10px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
                     <span style="font-size: 11px; color: #555;">💧 Avoiding Water Bodies</span>
-                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(waterScore)};">${getScoreEmoji(waterScore)} ${Math.round(waterScore)}%</span>
+                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(waterScore)};">${getScoreEmoji(waterScore)} ${waterScore}%</span>
                 </div>
                 <div style="background: #e9ecef; height: 12px; border-radius: 6px; overflow: hidden;">
                     <div style="background: ${getScoreColor(waterScore)}; height: 100%; width: ${waterScore}%; transition: width 0.5s ease;"></div>
                 </div>
             </div>
-            
-            <div style="margin-bottom: 5px;">
+        `;
+    }
+
+    if (protectedScore > 0) {
+        html += `
+            <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                    <span style="font-size: 11px; color: #555;">🛡️ Avoiding Protected Areas</span>
+                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(protectedScore)};">${getScoreEmoji(protectedScore)} ${protectedScore}%</span>
+                </div>
+                <div style="background: #e9ecef; height: 12px; border-radius: 6px; overflow: hidden;">
+                    <div style="background: ${getScoreColor(protectedScore)}; height: 100%; width: ${protectedScore}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+        `;
+    }
+
+    if (spanScore > 0) {
+        html += `
+            <div style="margin-bottom: 10px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
                     <span style="font-size: 11px; color: #555;">📏 Optimal Tower Spacing</span>
-                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(spanScore)};">${getScoreEmoji(spanScore)} ${Math.round(spanScore)}%</span>
+                    <span style="font-size: 11px; font-weight: bold; color: ${getScoreColor(spanScore)};">${getScoreEmoji(spanScore)} ${spanScore}%</span>
                 </div>
                 <div style="background: #e9ecef; height: 12px; border-radius: 6px; overflow: hidden;">
                     <div style="background: ${getScoreColor(spanScore)}; height: 100%; width: ${spanScore}%; transition: width 0.5s ease;"></div>
                 </div>
+                <div style="font-size: 9px; color: #6c757d; margin-top: 2px;">Avg span: ${avgSpan.toFixed(0)}m (target: 350m)</div>
             </div>
-            
+        `;
+    }
+    
+    // Add legend explaining the scores
+    html += `
             <div style="margin-top: 12px; padding: 8px; background: #f8f9fa; border-radius: 4px; font-size: 10px; color: #666; line-height: 1.4;">
                 <strong>What this means:</strong><br>
                 • 🟢 Green (80-100%): Excellent! Route avoids this feature well<br>
@@ -740,6 +820,10 @@ function generateRouteOptimalityGraph(errors, warnings, result) {
                 • 🔴 Red (0-39%): Problem area - route needs significant adjustment
             </div>
         </div>
+    `;
+
+    return html;
+}
     `;
 
     return html;
@@ -1189,6 +1273,9 @@ function displaySimpleCostSummary(costBreakdown) {
     }
 }
 
+// Alias — generateTowers calls displayCostBreakdown
+const displayCostBreakdown = displaySimpleCostSummary;
+
 /**
  * Export route as GeoJSON or XYZ (Eastings, Northings, elevation for simulation)
  */
@@ -1273,58 +1360,71 @@ async function viewCostSurface() {
     }
     
     try {
-        // Show loading
         const btn = document.getElementById('viewCostSurfaceBtn');
         const originalText = btn.textContent;
         btn.textContent = 'Loading...';
         btn.disabled = true;
         
-        // Fetch cost surface image
         const response = await fetch(`/api/projects/${currentProject.projectId}/cost-surface-image`);
         
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.error || 'Failed to load cost surface');
         }
-        
-        // Create blob URL for image
+
+        // Read bounds from response headers (no extra API call needed)
+        const minLon = parseFloat(response.headers.get('X-Bounds-Min-Lon'));
+        const minLat = parseFloat(response.headers.get('X-Bounds-Min-Lat'));
+        const maxLon = parseFloat(response.headers.get('X-Bounds-Max-Lon'));
+        const maxLat = parseFloat(response.headers.get('X-Bounds-Max-Lat'));
+        const costMin = response.headers.get('X-Cost-Min');
+        const costMax = response.headers.get('X-Cost-Max');
+
         const blob = await response.blob();
         const imageUrl = URL.createObjectURL(blob);
         
-        // Get project bounds for overlay
-        const projectResponse = await fetch(`/api/projects/${currentProject.projectId}`);
-        const projectData = await projectResponse.json();
-        const bounds = projectData.project.bounds;
-        
-        // Remove existing cost surface layer if any
         if (window.costSurfaceLayer) {
             map.removeLayer(window.costSurfaceLayer);
         }
         
-        // Add cost surface as image overlay with better opacity
-        window.costSurfaceLayer = L.imageOverlay(imageUrl, [
-            [bounds.min_lat, bounds.min_lon],
-            [bounds.max_lat, bounds.max_lon]
-        ], {
-            opacity: 0.85,
+        const imgBounds = [
+            [minLat, minLon],
+            [maxLat, maxLon]
+        ];
+
+        window.costSurfaceLayer = L.imageOverlay(imageUrl, imgBounds, {
+            opacity: 0.65,
             interactive: false
         }).addTo(map);
+
+        window.costSurfaceLayer.on('load', function() {
+            const el = window.costSurfaceLayer.getElement();
+            if (el) {
+                el.style.imageRendering = 'pixelated';
+                el.style.imageRendering = 'crisp-edges';
+            }
+        });
         
-        // Bring to front so it's visible
         window.costSurfaceLayer.bringToFront();
         
-        // Add to layer control
         if (window.layerControl) {
             window.layerControl.addOverlay(window.costSurfaceLayer, '🔥 Cost Surface (Heatmap)');
         }
-        
-        // Fit map to bounds
-        map.fitBounds([
-            [bounds.min_lat, bounds.min_lon],
-            [bounds.max_lat, bounds.max_lon]
-        ]);
-        
-        alert('Cost surface displayed!\n\n🔵 Blue = Low cost (preferred)\n🟢 Green = Low-Medium cost\n🟡 Yellow = Medium cost\n🔴 Red = High cost (avoid)');
+
+        // Show legend
+        const legend = document.getElementById('costSurfaceLegend');
+        if (legend) legend.style.display = 'block';
+
+        const infoText = document.getElementById('costSurfaceInfo');
+        if (infoText) {
+            infoText.innerHTML = `
+                <strong>Cost Surface (post-optimization):</strong><br>
+                Min: ${costMin} | Max: ${costMax}<br>
+                <small>Green = low cost · Red = high cost</small>
+            `;
+        }
+
+        map.fitBounds(imgBounds);
         
     } catch (error) {
         console.error('Cost surface error:', error);
@@ -1334,6 +1434,44 @@ async function viewCostSurface() {
         btn.textContent = 'View Cost Surface';
         btn.disabled = false;
     }
+}
+
+/**
+ * Build a dynamic QGIS-style legend from API classification data.
+ * @param {Array} entries  - array of {label, color, min, max, class} from API
+ * @param {string} containerId - DOM id to populate
+ */
+function buildDynamicLegend(entries, containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = entries.map(e => `
+        <div style="display:flex; align-items:center; gap:7px;">
+            <div style="width:22px; height:16px; background:${e.color}; border:1px solid rgba(0,0,0,0.25); flex-shrink:0;"></div>
+            <span style="font-size:10px; color:#222;">${e.label}</span>
+        </div>`).join('');
+}
+
+/**
+ * Remove cost surface overlay from map and hide legend
+ */
+function removeCostSurface() {
+    if (window.costSurfacePreviewLayer) {
+        map.removeLayer(window.costSurfacePreviewLayer);
+        window.costSurfacePreviewLayer = null;
+    }
+    if (window.costSurfaceRouteLayer) {
+        map.removeLayer(window.costSurfaceRouteLayer);
+        window.costSurfaceRouteLayer = null;
+    }
+    const legend = document.getElementById('costSurfaceLegend');
+    if (legend) legend.style.display = 'none';
+    const mapLegendPanel = document.getElementById('mapLegendPanel');
+    if (mapLegendPanel) mapLegendPanel.style.display = 'none';
+    const northArrow = document.getElementById('northArrow');
+    if (northArrow) northArrow.style.display = 'none';
+    const mapComp = document.getElementById('mapComposition');
+    if (mapComp) mapComp.style.display = 'none';
+    console.log('✓ Cost surface removed from map');
 }
 
 /**
@@ -1349,14 +1487,30 @@ async function generateCostSurface() {
         
         console.log('🎨 Generating cost surface with user-selected layers and weights...');
         
-        // Get current map bounds
-        const bounds = map.getBounds();
-        const min_lon = bounds.getWest();
-        const min_lat = bounds.getSouth();
-        const max_lon = bounds.getEast();
-        const max_lat = bounds.getNorth();
-        
-        const boundsArray = [min_lon, min_lat, max_lon, max_lat];
+        // Build bounds: use start/end points if set (study area), else current view
+        let boundsArray;
+        if (currentProject.start && currentProject.end) {
+            // Expand a margin around the start-end corridor (like QGIS study area)
+            const latMin = Math.min(currentProject.start.lat, currentProject.end.lat);
+            const latMax = Math.max(currentProject.start.lat, currentProject.end.lat);
+            const lonMin = Math.min(currentProject.start.lon, currentProject.end.lon);
+            const lonMax = Math.max(currentProject.start.lon, currentProject.end.lon);
+            const latSpan = latMax - latMin;
+            const lonSpan = lonMax - lonMin;
+            const margin = Math.max(0.1, Math.max(latSpan, lonSpan) * 0.25);
+            boundsArray = [
+                lonMin - margin,
+                latMin - margin,
+                lonMax + margin,
+                latMax + margin
+            ];
+            console.log('📐 Using start/end corridor bounds:', boundsArray);
+        } else {
+            // Fall back to current map view
+            const b = map.getBounds();
+            boundsArray = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+            console.log('📐 Using map view bounds:', boundsArray);
+        }
         
         // Build layers configuration from checkboxes and sliders
         const layersConfig = {
@@ -1409,13 +1563,15 @@ async function generateCostSurface() {
         // Call API to generate cost surface
         const response = await fetch('/api/cost-surface/generate', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 layers: layersConfig,
                 bounds: boundsArray,
-                resolution_m: 100  // Use 100m resolution for faster visualization
+                resolution_m: 100,   // 100m for fast preview; real data files use their native resolution
+                classification: document.getElementById('classificationMethod')?.value || 'quantile',
+                n_classes: parseInt(document.getElementById('nClasses')?.value || '5'),
+                start_point: currentProject.start ? { lat: currentProject.start.lat, lon: currentProject.start.lon } : null,
+                end_point:   currentProject.end   ? { lat: currentProject.end.lat,   lon: currentProject.end.lon   } : null,
             })
         });
         
@@ -1437,51 +1593,88 @@ async function generateCostSurface() {
             map.removeLayer(window.costSurfacePreviewLayer);
         }
         
-        // Create image from base64
         const imageUrl = `data:image/png;base64,${result.image_base64}`;
-        
-        // Add cost surface as image overlay
         const metadata = result.metadata;
         const imgBounds = [
-            [result.bounds[1], result.bounds[0]],  // SW: [min_lat, min_lon]
-            [result.bounds[3], result.bounds[2]]   // NE: [max_lat, max_lon]
+            [result.bounds[1], result.bounds[0]],
+            [result.bounds[3], result.bounds[2]]
         ];
         
         window.costSurfacePreviewLayer = L.imageOverlay(imageUrl, imgBounds, {
-            opacity: 0.7,
+            opacity: 0.6,
             interactive: false
         }).addTo(map);
 
-        // Show legend (and remember whether this is the first successful render)
+        // Apply pixelated rendering once the image element exists
+        window.costSurfacePreviewLayer.on('load', function() {
+            const el = window.costSurfacePreviewLayer.getElement();
+            if (el) {
+                el.style.imageRendering = 'pixelated';
+                el.style.imageRendering = 'crisp-edges';
+            }
+        });
+
+        // Zoom map to the cost surface area
+        map.fitBounds(imgBounds, { padding: [20, 20] });
+
+        // --- Build dynamic legend from API classification data ---
         const legend = document.getElementById('costSurfaceLegend');
         const isFirstRender = legend.style.display !== 'block';
         legend.style.display = 'block';
-        
-        // Update info text
-        const infoText = document.getElementById('costSurfaceInfo');
-        const enabledLayersList = Object.entries(layersConfig)
-            .filter(([_, config]) => config.enabled)
-            .map(([name, _]) => name)
-            .join(', ');
-        
-        infoText.innerHTML = `
-            <strong>Cost Surface Statistics:</strong><br>
-            Min: ${metadata.min_cost.toFixed(2)} | 
-            Max: ${metadata.max_cost.toFixed(2)} | 
-            Mean: ${metadata.mean_cost.toFixed(2)}<br>
-            <strong>Enabled Layers (${enabledCount}):</strong> ${enabledLayersList}<br>
-            Resolution: ${metadata.resolution_m}m | 
-            Data: ${metadata.data_source} | 
-            Time: ${metadata.generation_time_s}s
-        `;
-        
-        // Only recenter on the FIRST generation — preserve the user's
-        // current view when they scrub sliders to compare surfaces.
-        if (isFirstRender) {
-            map.fitBounds(imgBounds);
+
+        if (result.legend && result.legend.length) {
+            buildDynamicLegend(result.legend, 'legendEntries');
+            buildDynamicLegend(result.legend, 'mapLegendEntries');
         }
 
+        // Show QGIS map composition elements
+        const mapComp = document.getElementById('mapComposition');
+        const northArrow = document.getElementById('northArrow');
+        const mapLegendPanel = document.getElementById('mapLegendPanel');
+        if (mapComp) mapComp.style.display = 'block';
+        if (northArrow) northArrow.style.display = 'block';
+        if (mapLegendPanel) mapLegendPanel.style.display = 'block';
+
+        // --- Render route overlay (blue polyline) if returned by API ---
+        if (window.costSurfaceRouteLayer) {
+            map.removeLayer(window.costSurfaceRouteLayer);
+            window.costSurfaceRouteLayer = null;
+        }
+        if (result.route && result.route.geometry && result.route.geometry.coordinates.length > 1) {
+            window.costSurfaceRouteLayer = L.geoJSON(result.route, {
+                style: {
+                    color: '#1565c0',
+                    weight: 3,
+                    opacity: 0.95,
+                    lineJoin: 'round',
+                    lineCap: 'round',
+                }
+            }).addTo(map);
+            window.costSurfaceRouteLayer.bringToFront();
+        }
+
+        // Update stats info
+        const infoText = document.getElementById('costSurfaceInfo');
+        const cls = result.classification || {};
+        const enabledLayersList = Object.entries(layersConfig)
+            .filter(([_, c]) => c.enabled).map(([n]) => n).join(', ');
+        if (infoText) {
+            const tifLink = result.geotiff_url
+                ? `<br><a href="${result.geotiff_url}" download style="font-size:9px; color:#1565c0;">⬇ Download GeoTIFF</a>`
+                : '';
+            infoText.innerHTML =
+                `<strong>Classification:</strong> ${cls.method || ''} · ${cls.n_classes || ''} classes<br>` +
+                `Range: ${(cls.global_min || 0).toFixed(2)} – ${(cls.global_max || 0).toFixed(2)}<br>` +
+                `Layers: ${enabledLayersList}<br>` +
+                `Res: ${metadata.resolution_m}m · ${metadata.data_source} · ${metadata.generation_time_s}s` +
+                tifLink;
+        }
+
+        // Store GeoTIFF URL for external access
+        window.lastCostSurfaceGeoTIFF = result.geotiff_url || null;
+
         console.log('✅ Cost surface displayed on map');
+        if (result.geotiff_url) console.log('📁 GeoTIFF saved:', result.geotiff_url);
         
     } catch (error) {
         console.error('❌ Cost surface generation error:', error);

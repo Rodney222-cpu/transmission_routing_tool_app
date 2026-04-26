@@ -78,18 +78,34 @@
                     <div class="point-info">
                         <strong>Start Point</strong>
                         <div id="startCoords">Not set — click "Set Start Point" then click map</div>
-                        <div style="margin-top: 5px; font-size: 11px;">
-                            <input type="number" id="startLat" placeholder="Latitude" step="any" style="width: 45%; padding: 3px; font-size: 10px;" onchange="updateStartFromCoords()">
-                            <input type="number" id="startLon" placeholder="Longitude" step="any" style="width: 45%; padding: 3px; font-size: 10px;" onchange="updateStartFromCoords()">
+                        <div style="margin-top: 5px; font-size: 11px; display: flex; gap: 4px; align-items: center;">
+                            <input type="number" id="startLat" placeholder="Latitude" step="any"
+                                   style="width: 44%; padding: 4px; font-size: 10px; border: 1px solid #ccc; border-radius: 3px;"
+                                   onchange="applyStartFromCoords()"
+                                   onkeydown="if(event.key==='Enter') applyStartFromCoords()">
+                            <input type="number" id="startLon" placeholder="Longitude" step="any"
+                                   style="width: 44%; padding: 4px; font-size: 10px; border: 1px solid #ccc; border-radius: 3px;"
+                                   onchange="applyStartFromCoords()"
+                                   onkeydown="if(event.key==='Enter') applyStartFromCoords()">
+                            <button onclick="applyStartFromCoords()" title="Place marker"
+                                    style="padding: 4px 6px; font-size: 11px; background: #28a745; color: white; border: none; border-radius: 3px; cursor: pointer;">✓</button>
                         </div>
                     </div>
 
                     <div class="point-info">
                         <strong>End Point</strong>
                         <div id="endCoords">Not set — click "Set End Point" then click map</div>
-                        <div style="margin-top: 5px; font-size: 11px;">
-                            <input type="number" id="endLat" placeholder="Latitude" step="any" style="width: 45%; padding: 3px; font-size: 10px;" onchange="updateEndFromCoords()">
-                            <input type="number" id="endLon" placeholder="Longitude" step="any" style="width: 45%; padding: 3px; font-size: 10px;" onchange="updateEndFromCoords()">
+                        <div style="margin-top: 5px; font-size: 11px; display: flex; gap: 4px; align-items: center;">
+                            <input type="number" id="endLat" placeholder="Latitude" step="any"
+                                   style="width: 44%; padding: 4px; font-size: 10px; border: 1px solid #ccc; border-radius: 3px;"
+                                   onchange="applyEndFromCoords()"
+                                   onkeydown="if(event.key==='Enter') applyEndFromCoords()">
+                            <input type="number" id="endLon" placeholder="Longitude" step="any"
+                                   style="width: 44%; padding: 4px; font-size: 10px; border: 1px solid #ccc; border-radius: 3px;"
+                                   onchange="applyEndFromCoords()"
+                                   onkeydown="if(event.key==='Enter') applyEndFromCoords()">
+                            <button onclick="applyEndFromCoords()" title="Place marker"
+                                    style="padding: 4px 6px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;">✓</button>
                         </div>
                     </div>
 
@@ -106,21 +122,21 @@
 
                 <div class="sidebar-section">
                     <h3>Pathfinding Algorithm</h3>
-                    <p class="help-text">Choose algorithm for route optimization</p>
-                    <div class="algorithm-selector">
-                        <label>
-                            <input type="radio" name="algorithm" value="dijkstra" checked>
-                            <strong>Dijkstra</strong> - Standard least-cost path
-                        </label>
-                        <label>
-                            <input type="radio" name="algorithm" value="astar">
-                            <strong>A*</strong> - Heuristic-guided (faster)
-                        </label>
-                        <label>
-                            <input type="radio" name="algorithm" value="both">
-                            <strong>Both</strong> - Compare results
+                    <p class="help-text" style="font-size:11px;">Select algorithm, then click <strong>Optimize Route</strong>. Each click runs a full fresh computation.</p>
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <select id="algorithmSelect" class="form-control">
+                            <option value="dijkstra" selected>Dijkstra — Standard least-cost path</option>
+                            <option value="astar">A* — Heuristic-guided (straighter)</option>
+                        </select>
+                    </div>
+                    <div class="form-group checkbox" style="margin-bottom:8px;">
+                        <label style="font-size:11px;">
+                            <input type="checkbox" id="compareAlgorithms">
+                            Compare both algorithms (Dijkstra vs A*)
                         </label>
                     </div>
+                    <!-- Live status badge — updated by JS after each run -->
+                    <div id="algorithmStatusBadge" style="display:none; margin-bottom:8px; padding:5px 8px; border-radius:4px; font-size:11px; font-weight:600;"></div>
                 </div>
 
                 <div class="sidebar-section">
@@ -177,31 +193,29 @@
                         </p>
                     </div>
 
-                    <div id="costSurfaceLegend" style="margin-top: 15px; padding: 10px; background: #f9f9f9; border-radius: 5px; display: none;">
-                        <p style="font-size: 11px; font-weight: 600; margin-bottom: 8px;">📊 Cost Surface Legend</p>
-                        <div style="display: flex; flex-direction: column; gap: 4px;">
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <div style="width: 20px; height: 20px; background: rgb(34, 139, 34); border: 1px solid #333;"></div>
-                                <span style="font-size: 10px;">Very Low Cost (156-220)</span>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <div style="width: 20px; height: 20px; background: rgb(144, 238, 144); border: 1px solid #333;"></div>
-                                <span style="font-size: 10px;">Low Cost (220-284)</span>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <div style="width: 20px; height: 20px; background: rgb(255, 255, 0); border: 1px solid #333;"></div>
-                                <span style="font-size: 10px;">Moderate Cost (284-348)</span>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <div style="width: 20px; height: 20px; background: rgb(255, 165, 0); border: 1px solid #333;"></div>
-                                <span style="font-size: 10px;">High Cost (348-412)</span>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <div style="width: 20px; height: 20px; background: rgb(255, 0, 0); border: 1px solid #333;"></div>
-                                <span style="font-size: 10px;">Very High Cost (412-476)</span>
-                            </div>
+                    <!-- Classification controls -->
+                    <div style="margin-top: 10px; display: flex; gap: 6px; align-items: center;">
+                        <label style="font-size: 10px; color: #555; white-space: nowrap;">Classification:</label>
+                        <select id="classificationMethod" style="flex:1; font-size: 10px; padding: 3px; border: 1px solid #ccc; border-radius: 3px;">
+                            <option value="quantile" selected>Quantile</option>
+                            <option value="equal_interval">Equal Interval</option>
+                        </select>
+                        <select id="nClasses" style="width: 48px; font-size: 10px; padding: 3px; border: 1px solid #ccc; border-radius: 3px;">
+                            <option value="4">4</option>
+                            <option value="5" selected>5</option>
+                            <option value="6">6</option>
+                        </select>
+                    </div>
+
+                    <!-- Dynamic QGIS-style legend -->
+                    <div id="costSurfaceLegend" style="margin-top: 12px; padding: 10px; background: #fff; border: 1px solid #ddd; border-radius: 5px; display: none; box-shadow: 0 1px 4px rgba(0,0,0,0.1);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                            <p style="font-size: 11px; font-weight: 700; margin: 0; color: #222; letter-spacing: 0.3px;">COST</p>
+                            <button onclick="removeCostSurface()" title="Remove cost surface from map"
+                                    style="font-size:10px; padding:2px 7px; background:#dc3545; color:white; border:none; border-radius:3px; cursor:pointer;">✕ Remove</button>
                         </div>
-                        <p id="costSurfaceInfo" style="margin-top: 8px; font-size: 9px; color: #666;"></p>
+                        <div id="legendEntries" style="display: flex; flex-direction: column; gap: 3px;"></div>
+                        <p id="costSurfaceInfo" style="margin-top: 8px; font-size: 9px; color: #888; line-height: 1.4;"></p>
                     </div>
 
                     <div class="weight-sum">Total: <span id="weightSum">1.00</span></div>
@@ -209,19 +223,6 @@
                 
                 <div class="sidebar-section">
                     <h3>Optimizer</h3>
-                    <div class="form-group">
-                        <label>Pathfinding algorithm</label>
-                        <select id="algorithmSelect" class="form-control">
-                            <option value="dijkstra">Dijkstra (LCP)</option>
-                            <option value="astar">A* (Pathfinder)</option>
-                        </select>
-                        <p class="help-text" style="font-size: 11px; margin-top: 4px;">A* uses a heuristic for faster search; compare both to verify results match your weights.</p>
-                    </div>
-                    <div class="form-group checkbox">
-                        <label>
-                            <input type="checkbox" id="compareAlgorithms"> Compare both algorithms (Dijkstra vs A*)
-                        </label>
-                    </div>
                     <button id="optimizeBtn" class="btn btn-primary btn-large">
                         🚀 Optimize Route
                     </button>
@@ -232,7 +233,7 @@
 
                     <div id="loadingIndicator" class="loading" style="display: none;">
                         <div class="spinner"></div>
-                        <p>Generating optimal route...</p>
+                        <p id="loadingText">Generating optimal route...</p>
                     </div>
                 </div>
                 
@@ -268,6 +269,43 @@
             <!-- Map Container -->
             <main class="map-container">
                 <div id="map"></div>
+
+                <!-- QGIS-style map composition overlay -->
+                <div id="mapComposition" style="display:none; position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:1001; pointer-events:none;">
+                    <div style="background:rgba(255,255,255,0.92); padding:6px 18px; border-radius:4px; box-shadow:0 2px 8px rgba(0,0,0,0.25); text-align:center;">
+                        <span id="mapTitle" style="font-size:14px; font-weight:700; color:#111; letter-spacing:0.5px;">COST SURFACE &amp; ROUTE</span>
+                    </div>
+                </div>
+
+                <!-- North arrow -->
+                <div id="northArrow" style="display:none; position:absolute; top:14px; right:14px; z-index:1001; pointer-events:none; background:rgba(255,255,255,0.88); padding:6px 8px; border-radius:4px; box-shadow:0 1px 4px rgba(0,0,0,0.2); text-align:center;">
+                    <svg width="28" height="36" viewBox="0 0 28 36" xmlns="http://www.w3.org/2000/svg">
+                        <polygon points="14,2 20,20 14,16 8,20" fill="#222"/>
+                        <polygon points="14,34 8,16 14,20 20,16" fill="#aaa"/>
+                        <text x="14" y="10" text-anchor="middle" font-size="8" font-weight="bold" fill="white">N</text>
+                    </svg>
+                </div>
+
+                <!-- On-map QGIS-style legend panel -->
+                <div id="mapLegendPanel" style="display:none; position:absolute; bottom:60px; right:14px; z-index:1001; background:rgba(255,255,255,0.95); padding:10px 12px; border-radius:5px; box-shadow:0 2px 8px rgba(0,0,0,0.25); min-width:160px; pointer-events:none;">
+                    <div style="font-size:11px; font-weight:700; margin-bottom:6px; color:#111; border-bottom:1px solid #ddd; padding-bottom:4px;">COST</div>
+                    <div id="mapLegendEntries" style="display:flex; flex-direction:column; gap:4px;"></div>
+                    <div style="margin-top:8px; border-top:1px solid #eee; padding-top:6px;">
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+                            <div style="width:24px; height:3px; background:#1565c0;"></div>
+                            <span style="font-size:9px; color:#333;">Route</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+                            <div style="width:10px; height:10px; background:#2e7d32; border-radius:2px;"></div>
+                            <span style="font-size:9px; color:#333;">Start Point</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <div style="width:10px; height:10px; background:#c62828; border-radius:2px;"></div>
+                            <span style="font-size:9px; color:#333;">End Point</span>
+                        </div>
+                    </div>
+                    <div style="margin-top:6px; font-size:8px; color:#888;">CRS: EPSG:4326 (WGS 84)<br>Data: UBOS / UETCL</div>
+                </div>
                 
                 <!-- Coordinate Display (QGIS-style status bar) -->
                 <div class="qgis-statusbar" style="position: absolute; bottom: 10px; left: 10px; right: 10px; z-index: 1000; background: rgba(255,255,255,0.9); padding: 5px 10px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
